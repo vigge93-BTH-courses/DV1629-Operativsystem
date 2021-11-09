@@ -5,12 +5,14 @@
 struct threadArgs {
 	unsigned int id;
 	unsigned int numThreads;
+	unsigned long squaredId;
 };
 
 void* child(void* params) {
 	struct threadArgs *args = (struct threadArgs*) params;
 	unsigned int childID = args->id;
 	unsigned int numThreads = args->numThreads;
+	args->squaredId = childID * childID;
 	printf("Greetings from child #%u of %u\n", childID, numThreads);
 }
 
@@ -35,6 +37,9 @@ int main(int argc, char** argv) {
 	printf("I am the parent (main) thread.\n");
 	for (unsigned int id = 0; id < numThreads; id++) {
 		pthread_join(children[id], NULL );
+	}
+	for(int i = 0; i < numThreads; i++) {
+		printf("Id: %d, Squared Id: %lu\n", args[i].id, args[i].squaredId);
 	}
 	free(args); // deallocate args vector
 	free(children); // deallocate array
