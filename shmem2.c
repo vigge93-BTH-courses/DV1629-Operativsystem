@@ -74,7 +74,7 @@ int main(int argc, char **argv)
 			shmp->out = (shmp->out + 1) % BUFFER_SIZE;
 			sem_post(sem_mutex);
 			sem_post(sem_empty);
-			sleep((rand() % 50) / 10);
+			sleep((rand() % 30) / 10);
 		}
 		shmdt(addr);
 		shmctl(shmid, IPC_RMID, shm_buf);
