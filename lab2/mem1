@@ -1,0 +1,9 @@
+#!/bin/bash
+for pagesize in 128 256 512 1024
+do
+	for pages in 1 2 4 8 16 32 64 128
+	do
+		echo "Page size: $pagesize, Pages: $pages"
+		./fifo.exe $pages $pagesize mult.mem
+	done
+done
