@@ -4,6 +4,6 @@ do
 	for pages in 1 2 4 8 16 32 64 128
 	do
 		echo "Page size: $pagesize, Pages: $pages"
-		./optimal.exe $pages $pagesize mp3d.mem
+		./optimal.exe $pages $pagesize mult.mem
 	done
 done
