@@ -185,6 +185,21 @@ int
 FS::mv(std::string sourcepath, std::string destpath)
 {
     std::cout << "FS::mv(" << sourcepath << "," << destpath << ")\n";
+    dir_entry dir[BLOCK_SIZE/sizeof(dir_entry)];
+    int read = disk.read(ROOT_BLOCK, (uint8_t*)dir);
+    if (read == -1) {
+        std::cout << "Error reading directory\n";
+        return -1;
+    }
+    std::string filename = sourcepath.substr(sourcepath.find_last_of("/") + 1);
+    std::string dirpath = sourcepath.substr(0, sourcepath.find_last_of("/"));
+    for (int i = 0; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
+        if (strncmp(dir[i].file_name, filename.c_str(), 56) == 0) {
+            strncpy(dir[i].file_name, destpath.substr(destpath.find_last_of("/") + 1).c_str(), 56);
+            break;
+        }
+    }
+    disk.write(ROOT_BLOCK, (uint8_t*)dir);
     return 0;
 }
 
