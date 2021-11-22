@@ -16,6 +16,21 @@ int
 FS::format()
 {
     std::cout << "FS::format()\n";
+    for (int i = 0; i < BLOCK_SIZE/2; i++) {
+        fat[i] = EMPTY_BLOCK;
+    }
+    fat[0] = LAST_BLOCK;
+    fat[1] = LAST_BLOCK;
+    dir_entry root[BLOCK_SIZE/4]; // Dir_entry is 4 bytes;
+    for (int i = 0; i < BLOCK_SIZE/4; i++) {
+        root[i].file_name[0] = '\0';
+        root[i].size = -1;
+        root[i].first_blk = -1;
+        root[i].type = -1;
+        root[i].access_rights = -1;
+    }
+    disk.write(1, (uint8_t*)fat);
+    disk.write(0, (uint8_t*)root);
     return 0;
 }
 
