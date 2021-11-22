@@ -125,6 +125,27 @@ int
 FS::cat(std::string filepath)
 {
     std::cout << "FS::cat(" << filepath << ")\n";
+    dir_entry dir[BLOCK_SIZE/sizeof(dir_entry)];
+    int read = disk.read(ROOT_BLOCK, (uint8_t*)dir);
+    if (read == -1) {
+        std::cout << "Error reading directory\n";
+        return -1;
+    }
+    std::string filename = filepath.substr(filepath.find_last_of("/") + 1);
+    std::string dirpath = filepath.substr(0, filepath.find_last_of("/"));
+    for (int i = 0; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
+        if (strncmp(dir[i].file_name, filename.c_str(), 56) == 0) {
+            int blk_no = dir[i].first_blk;
+            while (blk_no != FAT_EOF) {
+                uint8_t buf[BLOCK_SIZE];
+                disk.read(blk_no, buf);
+                std::cout << buf;
+                blk_no = fat[blk_no];
+            }
+            std::cout << std::endl;
+            break;
+        }
+    }
     return 0;
 }
 
