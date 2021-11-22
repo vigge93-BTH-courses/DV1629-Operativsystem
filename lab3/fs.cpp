@@ -154,6 +154,19 @@ int
 FS::ls()
 {
     std::cout << "FS::ls()\n";
+    dir_entry dir[BLOCK_SIZE/sizeof(dir_entry)];
+    int read = disk.read(ROOT_BLOCK, (uint8_t*)dir);
+    if (read == -1) {
+        std::cout << "Error reading directory\n";
+        return -1;
+    }
+    std::cout << "name\tsize\n";
+    for (int i = 0; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
+        if (dir[i].first_blk != 0) {
+            std::cout << dir[i].file_name << "\t" << dir[i].size << "\n";
+        }
+    }
+    std::cout << std::endl;
     return 0;
 }
 
