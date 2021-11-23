@@ -6,6 +6,7 @@ FS::FS()
 {
     std::cout << "FS::FS()... Creating file system\n";
     disk.read(FAT_BLOCK, (uint8_t*)&fat);
+    disk.read(ROOT_BLOCK, (uint8_t*)&root_dir);
 }
 
 FS::~FS()
@@ -23,17 +24,16 @@ FS::format()
     }
     fat[ROOT_BLOCK] = FAT_EOF;
     fat[FAT_BLOCK] = FAT_EOF;
-    dir_entry root[BLOCK_SIZE/sizeof(dir_entry)];
     for (int i = 0; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
-        memset(root[i].file_name, 0, 56);
-        root[i].size = 0;
-        root[i].first_blk = 0;
-        root[i].type = 0;
-        root[i].access_rights = 0;
+        memset(root_dir[i].file_name, 0, 56);
+        root_dir[i].size = 0;
+        root_dir[i].first_blk = 0;
+        root_dir[i].type = 0;
+        root_dir[i].access_rights = 0;
     }
     std::cout << BLOCK_SIZE/sizeof(dir_entry) << " entries in root\n";
     disk.write(FAT_BLOCK, (uint8_t*)fat);
-    disk.write(ROOT_BLOCK, (uint8_t*)root);
+    disk.write(ROOT_BLOCK, (uint8_t*)root_dir);
     return 0;
 }
 
@@ -102,21 +102,20 @@ FS::create(std::string filepath)
     fat[blk_no] = FAT_EOF;
     disk.write(FAT_BLOCK, (uint8_t*)fat);
     
-    dir_entry dir[BLOCK_SIZE/sizeof(dir_entry)];
-    int read = disk.read(ROOT_BLOCK, (uint8_t*)dir);
-    if (read == -1) {
-        std::cout << "Error reading directory\n";
-        return -1;
-    }
+    // dir_entry dir[BLOCK_SIZE/sizeof(dir_entry)];
+    // int read = disk.read(ROOT_BLOCK, (uint8_t*)dir);
+    // if (read == -1) {
+    //     std::cout << "Error reading directory\n";
+    //     return -1;
+    // }
     
     for (int i = 0; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
-        std::cout << i  << ": " << dir[i].first_blk << "\n";
-        if (dir[i].first_blk == 0) {
-            dir[i] = file;
+        if (root_dir[i].first_blk == 0) {
+            root_dir[i] = file;
             break;
         }
     }
-    disk.write(ROOT_BLOCK, (uint8_t*)dir);
+    disk.write(ROOT_BLOCK, (uint8_t*)root_dir);
     return 0;
 }
 
@@ -125,17 +124,12 @@ int
 FS::cat(std::string filepath)
 {
     std::cout << "FS::cat(" << filepath << ")\n";
-    dir_entry dir[BLOCK_SIZE/sizeof(dir_entry)];
-    int read = disk.read(ROOT_BLOCK, (uint8_t*)dir);
-    if (read == -1) {
-        std::cout << "Error reading directory\n";
-        return -1;
-    }
+
     std::string filename = filepath.substr(filepath.find_last_of("/") + 1);
     std::string dirpath = filepath.substr(0, filepath.find_last_of("/"));
     for (int i = 0; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
-        if (strncmp(dir[i].file_name, filename.c_str(), 56) == 0) {
-            int blk_no = dir[i].first_blk;
+        if (strncmp(root_dir[i].file_name, filename.c_str(), 56) == 0) {
+            int blk_no = root_dir[i].first_blk;
             while (blk_no != FAT_EOF) {
                 uint8_t buf[BLOCK_SIZE];
                 disk.read(blk_no, buf);
@@ -154,16 +148,10 @@ int
 FS::ls()
 {
     std::cout << "FS::ls()\n";
-    dir_entry dir[BLOCK_SIZE/sizeof(dir_entry)];
-    int read = disk.read(ROOT_BLOCK, (uint8_t*)dir);
-    if (read == -1) {
-        std::cout << "Error reading directory\n";
-        return -1;
-    }
     std::cout << "name\tsize\n";
     for (int i = 0; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
-        if (dir[i].first_blk != 0) {
-            std::cout << dir[i].file_name << "\t" << dir[i].size << "\n";
+        if (root_dir[i].first_blk != 0) {
+            std::cout << root_dir[i].file_name << "\t" << root_dir[i].size << "\n";
         }
     }
     std::cout << std::endl;
@@ -176,6 +164,63 @@ int
 FS::cp(std::string sourcepath, std::string destpath)
 {
     std::cout << "FS::cp(" << sourcepath << "," << destpath << ")\n";
+
+    std::string source_filename = sourcepath.substr(sourcepath.find_last_of("/") + 1);
+    std::string dest_filename = destpath.substr(destpath.find_last_of("/") + 1);
+    std::string dirpath = sourcepath.substr(0, sourcepath.find_last_of("/"));
+
+    dir_entry new_file;
+    strncpy(new_file.file_name, dest_filename.c_str(), 56);
+    new_file.first_blk = 0;
+
+    int current_blk = -1;
+    for (int i = 0; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
+        if (strncmp(root_dir[i].file_name, source_filename.c_str(), 56) == 0) {
+            new_file.size = root_dir[i].size;
+            new_file.type = root_dir[i].type;
+            new_file.access_rights = root_dir[i].access_rights;
+            current_blk = root_dir[i].first_blk;
+            break;
+        }
+    }
+    if (current_blk == -1) {
+        std::cout << "File not found\n";
+        return -1;
+    }
+
+    int current_new_blk = -1;
+    while (current_blk != FAT_EOF) {
+        uint8_t buf[BLOCK_SIZE];
+        disk.read(current_blk, buf);
+        int new_blk_no = -1;
+        for(int i = 0; i < BLOCK_SIZE/2; i++) {
+            if (fat[i] == FAT_FREE) {
+                new_blk_no = i;
+                break;
+            }
+        }
+        if (new_blk_no == -1) {
+            std::cout << "No free blocks\n";
+            return -1;
+        }
+        if (new_file.first_blk == 0) {
+            new_file.first_blk = new_blk_no;
+        } else {
+            fat[current_new_blk] = new_blk_no;
+        }
+        current_new_blk = new_blk_no;
+        current_blk = fat[current_blk];
+        disk.write(new_blk_no, buf);
+    }
+    fat[current_new_blk] = FAT_EOF;
+    for (int i = 0; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
+        if (root_dir[i].first_blk == 0) {
+            root_dir[i] = new_file;
+            break;
+        }
+    }
+    disk.write(FAT_BLOCK, (uint8_t*)fat);
+    disk.write(ROOT_BLOCK, (uint8_t*)root_dir);
     return 0;
 }
 
@@ -185,6 +230,16 @@ int
 FS::mv(std::string sourcepath, std::string destpath)
 {
     std::cout << "FS::mv(" << sourcepath << "," << destpath << ")\n";
+    
+    std::string filename = sourcepath.substr(sourcepath.find_last_of("/") + 1);
+    std::string dirpath = sourcepath.substr(0, sourcepath.find_last_of("/"));
+    for (int i = 0; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
+        if (strncmp(root_dir[i].file_name, filename.c_str(), 56) == 0) {
+            strncpy(root_dir[i].file_name, destpath.substr(destpath.find_last_of("/") + 1).c_str(), 56);
+            break;
+        }
+    }
+    disk.write(ROOT_BLOCK, (uint8_t*)root_dir);
     return 0;
 }
 
@@ -193,21 +248,16 @@ int
 FS::rm(std::string filepath)
 {
     std::cout << "FS::rm(" << filepath << ")\n";
-    dir_entry dir[BLOCK_SIZE/sizeof(dir_entry)];
-    int read = disk.read(ROOT_BLOCK, (uint8_t*)dir);
-    if (read == -1) {
-        std::cout << "Error reading directory\n";
-        return -1;
-    }
+
     std::string filename = filepath.substr(filepath.find_last_of("/") + 1);
     std::string dirpath = filepath.substr(0, filepath.find_last_of("/"));
     int block_no = 0;
     for (int i = 0; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
-        if (strncmp(dir[i].file_name, filename.c_str(), 56) == 0) {
-            block_no = dir[i].first_blk;
-            dir[i].first_blk = 0;
-            dir[i].size = 0;
-            memset(dir[i].file_name, 0, 56);
+        if (strncmp(root_dir[i].file_name, filename.c_str(), 56) == 0) {
+            block_no = root_dir[i].first_blk;
+            root_dir[i].first_blk = 0;
+            root_dir[i].size = 0;
+            memset(root_dir[i].file_name, 0, 56);
             break;
         }
     }
@@ -216,7 +266,7 @@ FS::rm(std::string filepath)
         fat[block_no] = FAT_FREE;
         block_no = next_blk;
     }
-    disk.write(ROOT_BLOCK, (uint8_t*)dir);
+    disk.write(ROOT_BLOCK, (uint8_t*)root_dir);
     disk.write(FAT_BLOCK, (uint8_t*)fat);
     return 0;
 }
