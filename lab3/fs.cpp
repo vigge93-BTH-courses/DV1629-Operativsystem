@@ -277,6 +277,74 @@ int
 FS::append(std::string filepath1, std::string filepath2)
 {
     std::cout << "FS::append(" << filepath1 << "," << filepath2 << ")\n";
+    std::string filename1 = filepath1.substr(filepath1.find_last_of("/") + 1);
+    std::string filename2 = filepath2.substr(filepath2.find_last_of("/") + 1);
+
+    dir_entry file1;
+    dir_entry *file2;
+    for (int i = 0; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
+        if (strncmp(root_dir[i].file_name, filename1.c_str(), 56) == 0) {
+            file1 = root_dir[i];
+        }
+        if (strncmp(root_dir[i].file_name, filename2.c_str(), 56) == 0) {
+            file2 = &root_dir[i];
+        }
+    }
+    if (file1.first_blk == 0 || file2->first_blk == 0) {
+        std::cout << "File not found\n";
+        return -1;
+    }
+    int last_blk = file2->first_blk;
+    while (fat[last_blk] != FAT_EOF) {
+        last_blk = fat[last_blk];
+    }
+
+    int last_blk_size = file1.size % BLOCK_SIZE;
+    file2->size = file1.size + file2->size;
+    std::string data;
+    uint8_t buf[BLOCK_SIZE];
+    disk.read(last_blk, buf);
+    data.append((char*)buf, last_blk_size);
+    int current_blk = file1.first_blk;
+    int size_left = file1.size;
+    while (current_blk != FAT_EOF && size_left > 0) {
+        disk.read(current_blk, buf);
+        data.append((char*)buf, std::min(size_left, BLOCK_SIZE));
+        current_blk = fat[current_blk];
+        size_left -= BLOCK_SIZE;
+    }
+
+    disk.write(last_blk, (uint8_t*)data.c_str());
+    std::cout << data.length() << std::endl;
+    if (data.length() > BLOCK_SIZE)
+        data = data.substr(BLOCK_SIZE);
+    else
+        data = "";
+
+    while(data.length() > 0) {
+        int prev_blk_no = last_blk;
+        int last_blk = -1;
+        for(int i = 0; i < BLOCK_SIZE/2; i++) {
+            if (fat[i] == FAT_FREE) {
+                last_blk = i;
+                break;
+            }
+        }
+        if (last_blk == -1) {
+            std::cout << "No free blocks\n";
+            return -1;
+        }
+        fat[prev_blk_no] = last_blk;
+        disk.write(last_blk, (uint8_t*)data.c_str());
+        if (data.length() > 0) {
+            data = data.substr(BLOCK_SIZE);
+        } else {
+            data = "";
+        }
+    }
+    fat[last_blk] = FAT_EOF;
+    disk.write(FAT_BLOCK, (uint8_t*)fat);
+    disk.write(ROOT_BLOCK, (uint8_t*)root_dir);
     return 0;
 }
 
@@ -286,6 +354,7 @@ int
 FS::mkdir(std::string dirpath)
 {
     std::cout << "FS::mkdir(" << dirpath << ")\n";
+
     return 0;
 }
 
