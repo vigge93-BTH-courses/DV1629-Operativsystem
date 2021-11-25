@@ -29,11 +29,17 @@ private:
     Disk disk;
     // size of a FAT entry is 2 bytes
     int16_t fat[BLOCK_SIZE/2];
-    dir_entry root_dir[BLOCK_SIZE/sizeof(dir_entry)];
+    struct dir_entry root_dir[BLOCK_SIZE/64];
 
 public:
     FS();
     ~FS();
+
+    void get_filename_parts(std::string filepath, std::string *filename, std::string *dirpath);
+    int find_empty_block();
+    int write_data(int starting_block, std::string data);
+    int read_data(int start_blk, uint8_t* out_buf, int size);
+
     // formats the disk, i.e., creates an empty file system
     int format();
     // create <filepath> creates a new file on the disk, the data content is
