@@ -30,6 +30,8 @@ private:
     // size of a FAT entry is 2 bytes
     int16_t fat[BLOCK_SIZE/2];
     struct dir_entry root_dir[BLOCK_SIZE/64];
+    struct dir_entry cwd[BLOCK_SIZE/64];
+    int working_dir_blk;
 
 public:
     FS();
@@ -39,6 +41,7 @@ public:
     int find_empty_block();
     int write_data(int starting_block, std::string data);
     int read_data(int start_blk, uint8_t* out_buf, int size);
+    int init_dir(struct dir_entry *dir, int parent_blk);
 
     // formats the disk, i.e., creates an empty file system
     int format();
