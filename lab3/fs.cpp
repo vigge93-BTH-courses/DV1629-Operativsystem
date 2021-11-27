@@ -183,10 +183,13 @@ FS::cat(std::string filepath)
 int
 FS::ls()
 {
-    std::cout << "name\tsize\n";
+    std::cout << "name\ttype\tsize\n";
     for (int i = 0; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
-        if (root_dir[i].first_blk != 0) {
-            std::cout << root_dir[i].file_name << "\t" << root_dir[i].size << std::endl;
+        if (cwd[i].first_blk != 0 || cwd[i].type == TYPE_DIR) {
+            std::string type_name;
+            if (cwd[i].type == TYPE_DIR) type_name = "Dir";
+            else type_name = "File";
+            std::cout << cwd[i].file_name << "\t" << type_name << "\t" << cwd[i].size << std::endl;
         }
     }
     return 0;
