@@ -345,7 +345,36 @@ int
 FS::mkdir(std::string dirpath)
 {
     std::cout << "FS::mkdir(" << dirpath << ")\n";
-
+    
+    dir_entry new_entry;
+    strncpy(new_entry.file_name, dirpath.c_str(), 56);
+    new_entry.size = 0;
+    new_entry.first_blk = find_empty_block();
+    if (new_entry.first_blk == -1) {
+        std::cout << "No free blocksn\n" <<std::endl;
+        return -1;
+    }
+    new_entry.type = TYPE_DIR;
+    new_entry.access_rights = READ | WRITE;
+    int dir_index = -1;
+    for (int i = 1; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
+        if (cwd[i].first_blk == 0) {
+            dir_index = i;
+            break;
+        }
+    }
+    if (dir_index == -1) {
+        std::cout << "No free space in directory\n";
+        return -1;
+    }
+    cwd[dir_index] = new_entry;
+    fat[new_entry.first_blk] = FAT_EOF;
+    
+    dir_entry new_dir[BLOCK_SIZE/sizeof(dir_entry)];
+    std::cout << new_entry.first_blk << std::endl;
+    init_dir(new_dir, working_dir_blk);
+    std::cout << sizeof(new_dir) << std::endl;
+    disk.write(new_entry.first_blk, (uint8_t*) new_dir);
     return 0;   
 }
 
