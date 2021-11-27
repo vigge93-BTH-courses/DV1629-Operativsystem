@@ -383,6 +383,17 @@ int
 FS::cd(std::string dirpath)
 {
     std::cout << "FS::cd(" << dirpath << ")\n";
+    std::cout << working_dir_blk << "\n";
+    disk.write(working_dir_blk, (uint8_t*) cwd);
+    for (int i = 0; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
+        std::cout << cwd[i].file_name << "\n";
+        if (strncmp(cwd[i].file_name, dirpath.c_str(), 56) == 0) {
+            working_dir_blk = cwd[i].first_blk;
+            disk.read(working_dir_blk, (uint8_t*)cwd);
+            break;
+        }
+    }
+    std::cout << working_dir_blk << "\n";
     return 0;
 }
 
