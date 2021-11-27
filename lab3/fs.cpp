@@ -403,6 +403,31 @@ int
 FS::pwd()
 {
     std::cout << "FS::pwd()\n";
+    std::vector<std::string> dirs;
+    struct dir_entry current_dir;
+    int current_blk = working_dir_blk;
+    if (current_blk == ROOT_BLOCK) {
+        std::cout << "/" << std::endl;
+        return 0;
+    }
+    int prev_blk = cwd[0].first_blk;
+    while (current_blk != ROOT_BLOCK) {
+        struct dir_entry prev_dir[BLOCK_SIZE/sizeof(dir_entry)];
+        disk.read(prev_blk, (uint8_t*)prev_dir);
+        for(int i = 0; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
+            if (prev_dir[i].first_blk == current_blk) {
+                dirs.push_back(prev_dir[i].file_name);
+                break;
+            }
+        }
+        current_blk = prev_blk;
+        prev_blk = prev_dir[0].first_blk;
+    }
+    while(dirs.size() > 0) {
+        std::cout << "/" << dirs.back();
+        dirs.pop_back();
+    }
+    std::cout << std::endl;
     return 0;
 }
 
