@@ -547,5 +547,24 @@ int
 FS::chmod(std::string accessrights, std::string filepath)
 {
     std::cout << "FS::chmod(" << accessrights << "," << filepath << ")\n";
+    int cwd_blk = working_dir_blk;
+    dir_entry cur_cwd[BLOCK_SIZE/sizeof(dir_entry)];
+    memcpy(cur_cwd, cwd, sizeof(cwd));
+    
+    std::string filename;
+    std::string dirname;
+
+    int access_level = atoi(accessrights.c_str());
+    get_filename_parts(filepath, &filename, &dirname);
+    change_cwd(dirname);
+    for (int i = 1; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
+        if (strncmp(cwd[i].file_name, filename.c_str(), 56) == 0) {
+            cwd[i].access_rights = access_level;
+        }
+    }
+    // Restore cwd
+    disk.write(working_dir_blk, (uint8_t*) cwd);
+    working_dir_blk = cwd_blk;
+    memcpy(cwd, cur_cwd, sizeof(cwd));
     return 0;
 }
