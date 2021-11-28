@@ -141,8 +141,8 @@ FS::create(std::string filepath)
 
     int dir_index = -1;
     for (int i = 1; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
-        if (root_dir[i].first_blk == 0) {
-            root_dir[i] = file;
+        if (cwd[i].first_blk == 0) {
+            cwd[i] = file;
             dir_index = i;
             break;
         }
@@ -168,10 +168,10 @@ FS::cat(std::string filepath)
     std::string dirpath;
     get_filename_parts(filepath, &filename, &dirpath);
     for (int i = 0; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
-        if (strncmp(root_dir[i].file_name, filename.c_str(), 56) == 0) {
-            int blk_no = root_dir[i].first_blk;
-            uint8_t buf[root_dir[i].size];
-            read_data(blk_no, buf, root_dir[i].size);
+        if (strncmp(cwd[i].file_name, filename.c_str(), 56) == 0) {
+            int blk_no = cwd[i].first_blk;
+            uint8_t buf[cwd[i].size];
+            read_data(blk_no, buf, cwd[i].size);
             std::cout << buf << std::endl;
             break;
         }
@@ -189,7 +189,7 @@ FS::ls()
             std::string type_name;
             if (cwd[i].type == TYPE_DIR) type_name = "Dir";
             else type_name = "File";
-            std::cout << cwd[i].file_name << "\t" << type_name << "\t" << cwd[i].size << std::endl;
+            std::cout << cwd[i].file_name << "\t" << type_name << "\t" << (cwd[i].type == TYPE_DIR ? "-" : std::to_string(cwd[i].size)) << std::endl;
         }
     }
     return 0;
@@ -213,11 +213,11 @@ FS::cp(std::string sourcepath, std::string destpath)
 
     int current_blk = -1;
     for (int i = 0; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
-        if (strncmp(root_dir[i].file_name, source_filename.c_str(), 56) == 0) {
-            new_file.size = root_dir[i].size;
-            new_file.type = root_dir[i].type;
-            new_file.access_rights = root_dir[i].access_rights;
-            current_blk = root_dir[i].first_blk;
+        if (strncmp(cwd[i].file_name, source_filename.c_str(), 56) == 0) {
+            new_file.size = cwd[i].size;
+            new_file.type = cwd[i].type;
+            new_file.access_rights = cwd[i].access_rights;
+            current_blk = cwd[i].first_blk;
             break;
         }
     }
@@ -238,13 +238,11 @@ FS::cp(std::string sourcepath, std::string destpath)
     write_data(new_file.first_blk, std::string((char*)buf));
 
     for (int i = 1; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
-        if (root_dir[i].first_blk == 0) {
-            root_dir[i] = new_file;
+        if (cwd[i].first_blk == 0) {
+            cwd[i] = new_file;
             break;
         }
     }
-    disk.write(FAT_BLOCK, (uint8_t*)fat);
-    disk.write(ROOT_BLOCK, (uint8_t*)root_dir);
     return 0;
 }
 
@@ -259,8 +257,8 @@ FS::mv(std::string sourcepath, std::string destpath)
     get_filename_parts(sourcepath, &source_filename, &source_dir);
     get_filename_parts(destpath, &dest_filename, &dest_dir);
     for (int i = 0; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
-        if (strncmp(root_dir[i].file_name, source_filename.c_str(), 56) == 0) {
-            strncpy(root_dir[i].file_name, destpath.substr(destpath.find_last_of("/") + 1).c_str(), 56);
+        if (strncmp(cwd[i].file_name, source_filename.c_str(), 56) == 0) {
+            strncpy(cwd[i].file_name, dest_filename.c_str(), 56);
             break;
         }
     }
@@ -278,11 +276,11 @@ FS::rm(std::string filepath)
     get_filename_parts(filepath, &filename, &dirpath);
     int block_no = 0;
     for (int i = 1; i < BLOCK_SIZE/sizeof(dir_entry); i++) { // Can't remove ..;
-        if (strncmp(root_dir[i].file_name, filename.c_str(), 56) == 0) {
-            block_no = root_dir[i].first_blk;
-            root_dir[i].first_blk = 0;
-            root_dir[i].size = 0;
-            memset(root_dir[i].file_name, 0, 56);
+        if (strncmp(cwd[i].file_name, filename.c_str(), 56) == 0) {
+            block_no = cwd[i].first_blk;
+            cwd[i].first_blk = 0;
+            cwd[i].size = 0;
+            memset(cwd[i].file_name, 0, 56);
             break;
         }
     }
@@ -306,11 +304,11 @@ FS::append(std::string filepath1, std::string filepath2)
     dir_entry file1;
     dir_entry *file2;
     for (int i = 0; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
-        if (strncmp(root_dir[i].file_name, source_filename.c_str(), 56) == 0) {
-            file1 = root_dir[i];
+        if (strncmp(cwd[i].file_name, source_filename.c_str(), 56) == 0) {
+            file1 = cwd[i];
         }
-        if (strncmp(root_dir[i].file_name, dest_filename.c_str(), 56) == 0) {
-            file2 = &root_dir[i];
+        if (strncmp(cwd[i].file_name, dest_filename.c_str(), 56) == 0) {
+            file2 = &cwd[i];
         }
     }
     if (file1.first_blk == 0 || file2->first_blk == 0) {
