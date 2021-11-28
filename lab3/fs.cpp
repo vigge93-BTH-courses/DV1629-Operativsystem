@@ -1,8 +1,11 @@
 #include <iostream>
+#include <iomanip>
 #include <cstring>
 #include <vector>
 #include <algorithm>
 #include "fs.h"
+
+// TODO: Don't restore cwd if cwd is modified
 
 FS::FS()
 {
@@ -22,7 +25,11 @@ FS::~FS()
 void
 FS::get_filename_parts(std::string filepath, std::string *filename, std::string *dirpath) {
     *filename = filepath.substr(filepath.find_last_of("/") + 1);
-    *dirpath = filepath.substr(0, filepath.find_last_of("/"));
+    if (filepath.find_last_of("/") == std::string::npos) {
+        *dirpath = "";
+    } else {
+        *dirpath = filepath.substr(0, filepath.find_last_of("/"));
+    }
 }
 
 int
@@ -94,6 +101,9 @@ FS::init_dir(struct dir_entry *dir, int parent_blk) {
 
 int
 FS::change_cwd(std::string dirpath) {
+    if (dirpath.empty()) {
+        return 0;
+    }
     disk.write(working_dir_blk, (uint8_t*) cwd);
 
     std::string current_dir_name;
@@ -112,7 +122,7 @@ FS::change_cwd(std::string dirpath) {
         str_pos = dirpath.find("/", str_pos);
         current_dir_name = dirpath.substr(0, str_pos);
         for (int i = 0; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
-            if (strncmp(current_dir_name.c_str(), current_dir[i].file_name, 56) == 0) {
+            if (strncmp(current_dir_name.c_str(), current_dir[i].file_name, 56) == 0 && current_dir[i].type == TYPE_DIR) {
                 current_blk = current_dir[i].first_blk;
                 disk.read(current_blk, (uint8_t*)current_dir);
             }
@@ -196,9 +206,11 @@ FS::create(std::string filepath)
     }
 
     // Restore cwd
-    disk.write(working_dir_blk, (uint8_t*) cwd);
-    working_dir_blk = cwd_blk;
-    memcpy(cwd, cur_cwd, sizeof(cwd));
+    if (working_dir_blk != cwd_blk) {
+        disk.write(working_dir_blk, (uint8_t*) cwd);
+        working_dir_blk = cwd_blk;
+        disk.read(cwd_blk, (uint8_t*)cwd);
+    }
     return 0;
 }
 
@@ -240,13 +252,18 @@ FS::cat(std::string filepath)
 int
 FS::ls()
 {
-    std::cout << "name\ttype\tsize\n";
+    std::cout << std::left;
+    std::cout << std::setw(56) << "name" << "\ttype\taccessrights\tsize\n";
     for (int i = 0; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
         if (cwd[i].first_blk != 0 || cwd[i].type == TYPE_DIR) {
             std::string type_name;
             if (cwd[i].type == TYPE_DIR) type_name = "Dir";
             else type_name = "File";
-            std::cout << cwd[i].file_name << "\t" << type_name << "\t" << (cwd[i].type == TYPE_DIR ? "-" : std::to_string(cwd[i].size)) << std::endl;
+            std::cout << std::setw(56) << cwd[i].file_name << "\t" << type_name << "\t";
+            std::cout << (((cwd[i].access_rights & READ) != 0) ? "r" : "-");
+            std::cout << (((cwd[i].access_rights & WRITE) != 0) ? "w" : "-");
+            std::cout << (((cwd[i].access_rights & EXECUTE) != 0) ? "e" : "-");
+            std::cout << "\t\t" << (cwd[i].type == TYPE_DIR ? "-" : std::to_string(cwd[i].size)) << std::endl;
         }
     }
     return 0;
