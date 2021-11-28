@@ -5,8 +5,6 @@
 #include <algorithm>
 #include "fs.h"
 
-// TODO: Don't restore cwd if cwd is modified
-
 FS::FS()
 {
     std::cout << "FS::FS()... Creating file system\n";
@@ -325,9 +323,11 @@ FS::cp(std::string sourcepath, std::string destpath)
     }
 
     // Restore cwd
-    disk.write(working_dir_blk, (uint8_t*) cwd);
-    working_dir_blk = cwd_blk;
-    memcpy(cwd, cur_cwd, sizeof(cwd));
+    if (working_dir_blk != cwd_blk) {
+        disk.write(working_dir_blk, (uint8_t*) cwd);
+        working_dir_blk = cwd_blk;
+        memcpy(cwd, cur_cwd, sizeof(cwd));
+    }
     return 0;
 }
 
@@ -356,6 +356,10 @@ FS::mv(std::string sourcepath, std::string destpath)
         }
     }
     disk.write(working_dir_blk, (uint8_t*) cwd);
+    // Update saved cwd
+    if (working_dir_blk == cwd_blk) {
+        memcpy(cur_cwd, cwd, sizeof(cwd));
+    }
     change_cwd(dest_dir);
     for (int i = 1; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
         if (cwd[i].first_blk == 0) {
@@ -364,9 +368,11 @@ FS::mv(std::string sourcepath, std::string destpath)
     }
 
     // Restore cwd
-    disk.write(working_dir_blk, (uint8_t*) cwd);
-    working_dir_blk = cwd_blk;
-    memcpy(cwd, cur_cwd, sizeof(cwd));
+    if (working_dir_blk != cwd_blk) {
+        disk.write(working_dir_blk, (uint8_t*) cwd);
+        working_dir_blk = cwd_blk;
+        memcpy(cwd, cur_cwd, sizeof(cwd));
+    }
     return 0;
 }
 
@@ -399,9 +405,11 @@ FS::rm(std::string filepath)
         block_no = next_blk;
     }
     // Restore cwd
-    disk.write(working_dir_blk, (uint8_t*) cwd);
-    working_dir_blk = cwd_blk;
-    memcpy(cwd, cur_cwd, sizeof(cwd));
+    if (working_dir_blk != cwd_blk) {
+        disk.write(working_dir_blk, (uint8_t*) cwd);
+        working_dir_blk = cwd_blk;
+        memcpy(cwd, cur_cwd, sizeof(cwd));
+    }
     return 0;
 }
 
@@ -459,9 +467,11 @@ FS::append(std::string filepath1, std::string filepath2)
     write_data(file2_last_blk, std::string((char*)buf));
 
     // Restore cwd
-    disk.write(working_dir_blk, (uint8_t*) cwd);
-    working_dir_blk = cwd_blk;
-    memcpy(cwd, cur_cwd, sizeof(cwd));
+    if (working_dir_blk != cwd_blk) {
+        disk.write(working_dir_blk, (uint8_t*) cwd);
+        working_dir_blk = cwd_blk;
+        memcpy(cwd, cur_cwd, sizeof(cwd));
+    }
     return 0;
 }
 
@@ -509,10 +519,13 @@ FS::mkdir(std::string dirpath)
     init_dir(new_dir, working_dir_blk);
     std::cout << sizeof(new_dir) << std::endl;
     disk.write(new_entry.first_blk, (uint8_t*) new_dir);
+
     // Restore cwd
-    disk.write(working_dir_blk, (uint8_t*) cwd);
-    working_dir_blk = cwd_blk;
-    memcpy(cwd, cur_cwd, sizeof(cwd));
+    if (working_dir_blk != cwd_blk) {
+        disk.write(working_dir_blk, (uint8_t*) cwd);
+        working_dir_blk = cwd_blk;
+        memcpy(cwd, cur_cwd, sizeof(cwd));
+    }
     return 0;   
 }
 
@@ -580,8 +593,10 @@ FS::chmod(std::string accessrights, std::string filepath)
         }
     }
     // Restore cwd
-    disk.write(working_dir_blk, (uint8_t*) cwd);
-    working_dir_blk = cwd_blk;
-    memcpy(cwd, cur_cwd, sizeof(cwd));
+    if (working_dir_blk != cwd_blk) {
+        disk.write(working_dir_blk, (uint8_t*) cwd);
+        working_dir_blk = cwd_blk;
+        memcpy(cwd, cur_cwd, sizeof(cwd));
+    }
     return 0;
 }
