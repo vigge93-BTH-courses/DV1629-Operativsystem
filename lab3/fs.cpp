@@ -98,7 +98,7 @@ FS::init_dir(struct dir_entry *dir, int parent_blk) {
 }
 
 int
-FS::change_cwd(std::string dirpath) {
+FS::change_cwd(std::string dirpath, uint8_t *permissions) {
     if (dirpath.empty()) {
         return 0;
     }
@@ -122,6 +122,7 @@ FS::change_cwd(std::string dirpath) {
         for (int i = 0; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
             if (strncmp(current_dir_name.c_str(), current_dir[i].file_name, 56) == 0 && current_dir[i].type == TYPE_DIR) {
                 current_blk = current_dir[i].first_blk;
+                *permissions = current_dir[i].access_rights;
                 disk.read(current_blk, (uint8_t*)current_dir);
             }
         }
@@ -161,7 +162,12 @@ FS::create(std::string filepath)
     std::string filename;
     std::string dirpath;
     get_filename_parts(filepath, &filename, &dirpath);
-    change_cwd(dirpath);
+    uint8_t access_rights;
+    change_cwd(dirpath, &access_rights);
+    if ((access_rights & WRITE) == 0) {
+        std::cout << "You do not have permission to create files in this directory." << std::endl;
+        return -1;
+    }
 
     std::string data;
     std::string in;
@@ -223,7 +229,8 @@ FS::cat(std::string filepath)
     std::string filename;
     std::string dirpath;
     get_filename_parts(filepath, &filename, &dirpath);
-    change_cwd(dirpath);
+    uint8_t access_rights;
+    change_cwd(dirpath, &access_rights);
     
     int found = 0;
     for (int i = 0; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
@@ -287,7 +294,9 @@ FS::cp(std::string sourcepath, std::string destpath)
     strncpy(new_file.file_name, dest_filename.c_str(), 56);
     new_file.first_blk = 0;
 
-    change_cwd(source_dir);
+    uint8_t access_rights;
+    change_cwd(source_dir, &access_rights);
+
     int current_blk = -1;
     for (int i = 0; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
         if (strncmp(cwd[i].file_name, source_filename.c_str(), 56) == 0) {
@@ -314,7 +323,11 @@ FS::cp(std::string sourcepath, std::string destpath)
     new_file.first_blk = new_blk_no;
     write_data(new_file.first_blk, std::string((char*)buf));
 
-    change_cwd(dest_dir);
+    change_cwd(dest_dir, &access_rights);
+    if (access_rights & WRITE == 0) {
+        std::cout << "You do not have permission to create files in this directory." << std::endl;
+        return -1;
+    }
     for (int i = 1; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
         if (cwd[i].first_blk == 0) {
             cwd[i] = new_file;
@@ -344,7 +357,8 @@ FS::mv(std::string sourcepath, std::string destpath)
     get_filename_parts(sourcepath, &source_filename, &source_dir);
     get_filename_parts(destpath, &dest_filename, &dest_dir);
 
-    change_cwd(source_dir);
+    uint8_t access_rights;
+    change_cwd(source_dir, &access_rights);
     dir_entry file;
     for (int i = 0; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
         if (strncmp(cwd[i].file_name, source_filename.c_str(), 56) == 0) {
@@ -360,7 +374,11 @@ FS::mv(std::string sourcepath, std::string destpath)
     if (working_dir_blk == cwd_blk) {
         memcpy(cur_cwd, cwd, sizeof(cwd));
     }
-    change_cwd(dest_dir);
+    change_cwd(dest_dir, &access_rights);
+    if (access_rights & WRITE == 0) {
+        std::cout << "You do not have permission to create files in this directory." << std::endl;
+        return -1;
+    }
     for (int i = 1; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
         if (cwd[i].first_blk == 0) {
             cwd[i] = file;
@@ -387,8 +405,12 @@ FS::rm(std::string filepath)
     std::string filename = filepath.substr(filepath.find_last_of("/") + 1);
     std::string dirpath = filepath.substr(0, filepath.find_last_of("/"));
     get_filename_parts(filepath, &filename, &dirpath);
-    change_cwd(dirpath);
-
+    uint8_t access_rights;
+    change_cwd(dirpath, &access_rights);
+    if (access_rights & WRITE & EXECUTE == 0) {
+        std::cout << "You do not have permission to remove files in this directory." << std::endl;
+        return -1;
+    }
     int block_no = 0;
     for (int i = 1; i < BLOCK_SIZE/sizeof(dir_entry); i++) { // Can't remove ..;
         if (strncmp(cwd[i].file_name, filename.c_str(), 56) == 0) {
@@ -428,13 +450,14 @@ FS::append(std::string filepath1, std::string filepath2)
 
     dir_entry file1;
     dir_entry *file2;
-    change_cwd(source_dir);
+    uint8_t access_rights;
+    change_cwd(source_dir, &access_rights);
     for (int i = 1; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
         if (strncmp(cwd[i].file_name, source_filename.c_str(), 56) == 0) {
             file1 = cwd[i];
         }
     }
-    change_cwd(dest_dir);
+    change_cwd(dest_dir, &access_rights);
     for (int i = 1; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
         if (strncmp(cwd[i].file_name, dest_filename.c_str(), 56) == 0) {
             file2 = &cwd[i];
@@ -480,7 +503,6 @@ FS::append(std::string filepath1, std::string filepath2)
 int
 FS::mkdir(std::string dirpath)
 {
-    std::cout << "FS::mkdir(" << dirpath << ")\n";
     int cwd_blk = working_dir_blk;
     dir_entry cur_cwd[BLOCK_SIZE/sizeof(dir_entry)];
     memcpy(cur_cwd, cwd, sizeof(cwd));
@@ -488,8 +510,12 @@ FS::mkdir(std::string dirpath)
     std::string dirname;
     std::string path;
     get_filename_parts(dirpath, &dirname, &path);
-    change_cwd(path);
-
+    uint8_t access_rights;
+    change_cwd(path, &access_rights);
+    if (access_rights & WRITE == 0) {
+        std::cout << "You do not have permission to create directories in this directory." << std::endl;
+        return -1;
+    }
     dir_entry new_entry;
     strncpy(new_entry.file_name, dirname.c_str(), 56);
     new_entry.size = 0;
@@ -533,7 +559,8 @@ FS::mkdir(std::string dirpath)
 int
 FS::cd(std::string dirpath)
 {
-    change_cwd(dirpath);
+    uint8_t access_rights;
+    change_cwd(dirpath, &access_rights);
     return 0;
 }
 
@@ -576,7 +603,7 @@ FS::pwd()
 int
 FS::chmod(std::string accessrights, std::string filepath)
 {
-    std::cout << "FS::chmod(" << accessrights << "," << filepath << ")\n";
+    std::cout << "chmod " << accessrights << std::endl;
     int cwd_blk = working_dir_blk;
     dir_entry cur_cwd[BLOCK_SIZE/sizeof(dir_entry)];
     memcpy(cur_cwd, cwd, sizeof(cwd));
@@ -586,12 +613,15 @@ FS::chmod(std::string accessrights, std::string filepath)
 
     int access_level = atoi(accessrights.c_str());
     get_filename_parts(filepath, &filename, &dirname);
-    change_cwd(dirname);
+    std::cout << filename << std::endl;
+    uint8_t access_rights;
+    change_cwd(dirname, &access_rights);
     for (int i = 1; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
         if (strncmp(cwd[i].file_name, filename.c_str(), 56) == 0) {
             cwd[i].access_rights = access_level;
         }
     }
+    disk.write(working_dir_blk, (uint8_t*) cwd);
     // Restore cwd
     if (working_dir_blk != cwd_blk) {
         disk.write(working_dir_blk, (uint8_t*) cwd);
