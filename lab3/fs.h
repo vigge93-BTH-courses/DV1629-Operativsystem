@@ -42,7 +42,8 @@ public:
     int write_data(int starting_block, std::string data);
     int read_data(int start_blk, uint8_t* out_buf, int size);
     int init_dir(struct dir_entry *dir, int parent_blk);
-
+    int change_cwd(std::string dirpath);
+    
     // formats the disk, i.e., creates an empty file system
     int format();
     // create <filepath> creates a new file on the disk, the data content is

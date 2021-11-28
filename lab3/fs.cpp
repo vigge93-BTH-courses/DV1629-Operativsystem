@@ -92,6 +92,38 @@ FS::init_dir(struct dir_entry *dir, int parent_blk) {
     return 0;
 }
 
+int
+FS::change_cwd(std::string dirpath) {
+    disk.write(working_dir_blk, (uint8_t*) cwd);
+
+    std::string current_dir_name;
+    int str_pos = 0;
+    int current_blk = -1;
+    struct dir_entry current_dir[BLOCK_SIZE/sizeof(dir_entry)];
+    if (dirpath.rfind('/', 0) == 0) { // Absolute path
+        dirpath.erase(0, 1);
+        current_blk = ROOT_BLOCK;
+        memcpy(current_dir, root_dir, sizeof(root_dir));
+    } else { // Relative path
+        current_blk = working_dir_blk;
+        memcpy(current_dir, cwd, sizeof(cwd));
+    }
+    while (str_pos != std::string::npos) {
+        str_pos = dirpath.find("/", str_pos);
+        current_dir_name = dirpath.substr(0, str_pos);
+        for (int i = 0; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
+            if (strncmp(current_dir_name.c_str(), current_dir[i].file_name, 56) == 0) {
+                current_blk = current_dir[i].first_blk;
+                disk.read(current_blk, (uint8_t*)current_dir);
+            }
+        }
+        dirpath.erase(0, str_pos + 1);
+    }
+    memcpy(cwd, current_dir, sizeof(current_dir));
+    working_dir_blk = current_blk;
+    return 0;
+}
+
 // formats the disk, i.e., creates an empty file system
 int
 FS::format()
@@ -113,10 +145,15 @@ FS::format()
 int
 FS::create(std::string filepath)
 {
+    int cwd_blk = working_dir_blk;
+    dir_entry cur_cwd[BLOCK_SIZE/sizeof(dir_entry)];
+    memcpy(cur_cwd, cwd, sizeof(cwd));
+
     dir_entry file;
     std::string filename;
     std::string dirpath;
     get_filename_parts(filepath, &filename, &dirpath);
+    change_cwd(dirpath);
 
     std::string data;
     std::string in;
@@ -157,6 +194,11 @@ FS::create(std::string filepath)
         std::cout << "No free blocks\n";
         return -1;
     }
+
+    // Restore cwd
+    disk.write(working_dir_blk, (uint8_t*) cwd);
+    working_dir_blk = cwd_blk;
+    memcpy(cwd, cur_cwd, sizeof(cwd));
     return 0;
 }
 
@@ -164,18 +206,33 @@ FS::create(std::string filepath)
 int
 FS::cat(std::string filepath)
 {
+    int cwd_blk = working_dir_blk;
+    dir_entry cur_cwd[BLOCK_SIZE/sizeof(dir_entry)];
+    memcpy(cur_cwd, cwd, sizeof(cwd));
+    
     std::string filename;
     std::string dirpath;
     get_filename_parts(filepath, &filename, &dirpath);
+    change_cwd(dirpath);
+    
+    int found = 0;
     for (int i = 0; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
         if (strncmp(cwd[i].file_name, filename.c_str(), 56) == 0) {
             int blk_no = cwd[i].first_blk;
             uint8_t buf[cwd[i].size];
             read_data(blk_no, buf, cwd[i].size);
             std::cout << buf << std::endl;
+            found = 1;
             break;
         }
     }
+    if (found == 0) {
+        std::cout << "File \"" << filename << "\" not found" << std::endl;
+    }
+
+    // Restore cwd
+    working_dir_blk = cwd_blk;
+    memcpy(cwd, cur_cwd, sizeof(cwd));
     return 0;
 }
 
@@ -200,6 +257,10 @@ FS::ls()
 int
 FS::cp(std::string sourcepath, std::string destpath)
 {
+    int cwd_blk = working_dir_blk;
+    dir_entry cur_cwd[BLOCK_SIZE/sizeof(dir_entry)];
+    memcpy(cur_cwd, cwd, sizeof(cwd));
+
     std::string source_filename;
     std::string source_dir;
     std::string dest_filename;
@@ -211,6 +272,7 @@ FS::cp(std::string sourcepath, std::string destpath)
     strncpy(new_file.file_name, dest_filename.c_str(), 56);
     new_file.first_blk = 0;
 
+    change_cwd(source_dir);
     int current_blk = -1;
     for (int i = 0; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
         if (strncmp(cwd[i].file_name, source_filename.c_str(), 56) == 0) {
@@ -237,12 +299,18 @@ FS::cp(std::string sourcepath, std::string destpath)
     new_file.first_blk = new_blk_no;
     write_data(new_file.first_blk, std::string((char*)buf));
 
+    change_cwd(dest_dir);
     for (int i = 1; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
         if (cwd[i].first_blk == 0) {
             cwd[i] = new_file;
             break;
         }
     }
+
+    // Restore cwd
+    disk.write(working_dir_blk, (uint8_t*) cwd);
+    working_dir_blk = cwd_blk;
+    memcpy(cwd, cur_cwd, sizeof(cwd));
     return 0;
 }
 
@@ -251,17 +319,37 @@ FS::cp(std::string sourcepath, std::string destpath)
 int
 FS::mv(std::string sourcepath, std::string destpath)
 {
-    std::cout << "FS::mv(" << sourcepath << "," << destpath << ")\n";
-    
+    int cwd_blk = working_dir_blk;
+    dir_entry cur_cwd[BLOCK_SIZE/sizeof(dir_entry)];
+    memcpy(cur_cwd, cwd, sizeof(cwd));
+
     std::string source_filename, source_dir, dest_filename, dest_dir;
     get_filename_parts(sourcepath, &source_filename, &source_dir);
     get_filename_parts(destpath, &dest_filename, &dest_dir);
+
+    change_cwd(source_dir);
+    dir_entry file;
     for (int i = 0; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
         if (strncmp(cwd[i].file_name, source_filename.c_str(), 56) == 0) {
-            strncpy(cwd[i].file_name, dest_filename.c_str(), 56);
-            break;
+            file = cwd[i];
+            cwd[i].first_blk = 0;
+            cwd[i].size = 0;
+            cwd[i].type = 0;
+            strncpy(cwd[i].file_name, "", 56);
         }
     }
+    disk.write(working_dir_blk, (uint8_t*) cwd);
+    change_cwd(dest_dir);
+    for (int i = 1; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
+        if (cwd[i].first_blk == 0) {
+            cwd[i] = file;
+        }
+    }
+
+    // Restore cwd
+    disk.write(working_dir_blk, (uint8_t*) cwd);
+    working_dir_blk = cwd_blk;
+    memcpy(cwd, cur_cwd, sizeof(cwd));
     return 0;
 }
 
@@ -269,11 +357,15 @@ FS::mv(std::string sourcepath, std::string destpath)
 int
 FS::rm(std::string filepath)
 {
-    std::cout << "FS::rm(" << filepath << ")\n";
+    int cwd_blk = working_dir_blk;
+    dir_entry cur_cwd[BLOCK_SIZE/sizeof(dir_entry)];
+    memcpy(cur_cwd, cwd, sizeof(cwd));
 
     std::string filename = filepath.substr(filepath.find_last_of("/") + 1);
     std::string dirpath = filepath.substr(0, filepath.find_last_of("/"));
     get_filename_parts(filepath, &filename, &dirpath);
+    change_cwd(dirpath);
+
     int block_no = 0;
     for (int i = 1; i < BLOCK_SIZE/sizeof(dir_entry); i++) { // Can't remove ..;
         if (strncmp(cwd[i].file_name, filename.c_str(), 56) == 0) {
@@ -289,6 +381,10 @@ FS::rm(std::string filepath)
         fat[block_no] = FAT_FREE;
         block_no = next_blk;
     }
+    // Restore cwd
+    disk.write(working_dir_blk, (uint8_t*) cwd);
+    working_dir_blk = cwd_blk;
+    memcpy(cwd, cur_cwd, sizeof(cwd));
     return 0;
 }
 
@@ -297,16 +393,24 @@ FS::rm(std::string filepath)
 int
 FS::append(std::string filepath1, std::string filepath2)
 {
+    int cwd_blk = working_dir_blk;
+    dir_entry cur_cwd[BLOCK_SIZE/sizeof(dir_entry)];
+    memcpy(cur_cwd, cwd, sizeof(cwd));
+
     std::string source_filename, source_dir, dest_filename, dest_dir;
     get_filename_parts(filepath1, &source_filename, &source_dir);
     get_filename_parts(filepath2, &dest_filename, &dest_dir);
 
     dir_entry file1;
     dir_entry *file2;
-    for (int i = 0; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
+    change_cwd(source_dir);
+    for (int i = 1; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
         if (strncmp(cwd[i].file_name, source_filename.c_str(), 56) == 0) {
             file1 = cwd[i];
         }
+    }
+    change_cwd(dest_dir);
+    for (int i = 1; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
         if (strncmp(cwd[i].file_name, dest_filename.c_str(), 56) == 0) {
             file2 = &cwd[i];
         }
@@ -335,8 +439,12 @@ FS::append(std::string filepath1, std::string filepath2)
     read_data(file2_last_blk, buf, file2_last_blk_size - 1);
     read_data(file1.first_blk, &buf[file2_last_blk_size - 1], file1.size);
 
-    
     write_data(file2_last_blk, std::string((char*)buf));
+
+    // Restore cwd
+    disk.write(working_dir_blk, (uint8_t*) cwd);
+    working_dir_blk = cwd_blk;
+    memcpy(cwd, cur_cwd, sizeof(cwd));
     return 0;
 }
 
@@ -346,9 +454,17 @@ int
 FS::mkdir(std::string dirpath)
 {
     std::cout << "FS::mkdir(" << dirpath << ")\n";
+    int cwd_blk = working_dir_blk;
+    dir_entry cur_cwd[BLOCK_SIZE/sizeof(dir_entry)];
+    memcpy(cur_cwd, cwd, sizeof(cwd));
     
+    std::string dirname;
+    std::string path;
+    get_filename_parts(dirpath, &dirname, &path);
+    change_cwd(path);
+
     dir_entry new_entry;
-    strncpy(new_entry.file_name, dirpath.c_str(), 56);
+    strncpy(new_entry.file_name, dirname.c_str(), 56);
     new_entry.size = 0;
     new_entry.first_blk = find_empty_block();
     if (new_entry.first_blk == -1) {
@@ -376,6 +492,10 @@ FS::mkdir(std::string dirpath)
     init_dir(new_dir, working_dir_blk);
     std::cout << sizeof(new_dir) << std::endl;
     disk.write(new_entry.first_blk, (uint8_t*) new_dir);
+    // Restore cwd
+    disk.write(working_dir_blk, (uint8_t*) cwd);
+    working_dir_blk = cwd_blk;
+    memcpy(cwd, cur_cwd, sizeof(cwd));
     return 0;   
 }
 
@@ -383,18 +503,7 @@ FS::mkdir(std::string dirpath)
 int
 FS::cd(std::string dirpath)
 {
-    std::cout << "FS::cd(" << dirpath << ")\n";
-    std::cout << working_dir_blk << "\n";
-    disk.write(working_dir_blk, (uint8_t*) cwd);
-    for (int i = 0; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
-        std::cout << cwd[i].file_name << "\n";
-        if (strncmp(cwd[i].file_name, dirpath.c_str(), 56) == 0) {
-            working_dir_blk = cwd[i].first_blk;
-            disk.read(working_dir_blk, (uint8_t*)cwd);
-            break;
-        }
-    }
-    std::cout << working_dir_blk << "\n";
+    change_cwd(dirpath);
     return 0;
 }
 
