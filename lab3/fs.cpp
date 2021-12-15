@@ -11,22 +11,24 @@ FS::FS()
     disk.read(FAT_BLOCK, (uint8_t*)fat);
     disk.read(ROOT_BLOCK, (uint8_t*)root_dir);
     memcpy(cwd, root_dir, sizeof(root_dir));
-    working_dir_blk = ROOT_BLOCK;
+    cwd_info = cwd[0];
+    cwd_blk = ROOT_BLOCK;
 }
 
 FS::~FS()
 {
     disk.write(FAT_BLOCK, (uint8_t*)fat);
-    disk.write(working_dir_blk, (uint8_t*)cwd);
+    disk.write(cwd_blk, (uint8_t*)cwd);
 }
 
 void
 FS::get_filename_parts(std::string filepath, std::string *filename, std::string *dirpath) {
+    // FIXME: Base on content in directory
     *filename = filepath.substr(filepath.find_last_of("/") + 1);
     if (filepath.find_last_of("/") == std::string::npos) {
         *dirpath = "";
     } else {
-        *dirpath = filepath.substr(0, filepath.find_last_of("/"));
+        *dirpath = filepath.substr(0, filepath.find_last_of("/") + 1);
     }
 }
 
@@ -40,6 +42,7 @@ FS::find_empty_block() {
         }
     }
     if (blk_no == -1) {
+        std::cout << "No free blocks" << std::endl;
         return -1;
     }
     return blk_no;
@@ -49,7 +52,11 @@ int
 FS::write_data(int starting_block, std::string data) {
     int blk_no = starting_block;
     while(data.length() > 0) {
-        disk.write(blk_no, (uint8_t*)data.c_str());
+        int write = disk.write(blk_no, (uint8_t*)data.c_str());
+        if (write == -1) {
+            std::cout << "Error writing to disk" << std::endl;
+            return -1;
+        }
         if (data.length() > BLOCK_SIZE) {
             data = data.substr(BLOCK_SIZE);
         } else {
@@ -69,11 +76,15 @@ FS::write_data(int starting_block, std::string data) {
 
 int
 FS::read_data(int start_blk, uint8_t* out_buf, int size) { 
-    int current_blk =  start_blk;
+    int current_blk = start_blk;
     int i = 0;
     uint8_t buf[BLOCK_SIZE];
     while (current_blk != FAT_EOF && i < size) {
-        disk.read(current_blk, buf);
+        int read = disk.read(current_blk, buf);
+        if (read == -1) {
+            std::cout << "Error reading disk " << std::endl;
+            return -1;
+        }
         memcpy(&out_buf[i*BLOCK_SIZE], buf, std::min(BLOCK_SIZE, size - i*BLOCK_SIZE));
         current_blk = fat[current_blk];
         ++i;
@@ -93,43 +104,87 @@ FS::init_dir(struct dir_entry *dir, int parent_blk) {
     strncpy(dir[0].file_name, "..", 2);
     dir[0].first_blk = parent_blk;
     dir[0].type = TYPE_DIR;
-    dir[0].access_rights = READ | WRITE;
+    dir[0].access_rights = READ | WRITE | EXECUTE;
     return 0;
 }
 
 int
-FS::change_cwd(std::string dirpath, uint8_t *permissions) {
+FS::change_cwd(std::string dirpath) {
     if (dirpath.empty()) {
         return 0;
     }
-    disk.write(working_dir_blk, (uint8_t*) cwd);
+    int write = disk.write(cwd_blk, (uint8_t*) cwd);
+    if (write == -1) {
+        std::cout << "Error writing to disk" << std::endl;
+        return -1;
+    }
+    if (cwd_blk == ROOT_BLOCK) {
+        memcpy(root_dir, cwd, sizeof(cwd));
+    }
 
     std::string current_dir_name;
-    int str_pos = 0;
     int current_blk = -1;
     struct dir_entry current_dir[BLOCK_SIZE/sizeof(dir_entry)];
+    struct dir_entry new_cwd_info;
     if (dirpath.rfind('/', 0) == 0) { // Absolute path
         dirpath.erase(0, 1);
         current_blk = ROOT_BLOCK;
         memcpy(current_dir, root_dir, sizeof(root_dir));
+        new_cwd_info = root_dir[0]; // root dir info is ..
     } else { // Relative path
-        current_blk = working_dir_blk;
+        current_blk = cwd_blk;
         memcpy(current_dir, cwd, sizeof(cwd));
     }
+
+    int str_pos = 0;
     while (str_pos != std::string::npos) {
         str_pos = dirpath.find("/", str_pos);
         current_dir_name = dirpath.substr(0, str_pos);
+        int found = 0;
         for (int i = 0; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
-            if (strncmp(current_dir_name.c_str(), current_dir[i].file_name, 56) == 0 && current_dir[i].type == TYPE_DIR) {
+            if (current_dir_name.empty() || strncmp(current_dir_name.c_str(), current_dir[i].file_name, 56) == 0 && current_dir[i].type == TYPE_DIR) {
                 current_blk = current_dir[i].first_blk;
-                *permissions = current_dir[i].access_rights;
-                disk.read(current_blk, (uint8_t*)current_dir);
+                new_cwd_info = current_dir[i];
+                int read = disk.read(current_blk, (uint8_t*)current_dir);
+                if (read == -1) {
+                    std::cout << "Error reading from disk" << std::endl;
+                    return -1;
+                }
+                found = 1;
+                break;
             }
+        }
+        if (found == 0) {
+            std::cout << "Path not found" << std::endl;
+            return -1;
         }
         dirpath.erase(0, str_pos + 1);
     }
+    cwd_info = new_cwd_info;
+    cwd_blk = current_blk;
     memcpy(cwd, current_dir, sizeof(current_dir));
-    working_dir_blk = current_blk;
+    return 0;
+}
+
+int
+FS::restore_cwd(dir_entry cur_cwd[BLOCK_SIZE/sizeof(dir_entry)], int cur_cwd_blk, dir_entry cur_cwd_info, int save = 1) {
+    if (save == 0) {
+        memcpy(cwd, cur_cwd, sizeof(cwd));
+        cwd_info = cur_cwd_info;
+        cwd_blk = cur_cwd_blk;
+    } else if (cwd_blk != cur_cwd_blk) {
+        if (disk.write(cwd_blk, (uint8_t*) cwd) == -1) {
+            std::cout << "Fatal error when restoring cwd. Exiting." << std::endl;
+            exit(1);
+        };
+
+        cwd_blk = cur_cwd_blk;
+        cwd_info = cur_cwd_info;
+        memcpy(cwd, cur_cwd, sizeof(cwd));
+    }
+    if (cur_cwd_blk == ROOT_BLOCK) {
+        memcpy(root_dir, cur_cwd, sizeof(root_dir));
+    }
     return 0;
 }
 
@@ -145,7 +200,8 @@ FS::format()
 
     init_dir(root_dir, ROOT_BLOCK);
     memcpy(cwd, root_dir, sizeof(root_dir));
-    working_dir_blk = 0;
+    cwd_blk = 0;
+    cwd_info = root_dir[0];
     return 0;
 }
 
@@ -154,7 +210,8 @@ FS::format()
 int
 FS::create(std::string filepath)
 {
-    int cwd_blk = working_dir_blk;
+    int cur_cwd_blk = cwd_blk;
+    dir_entry cur_cwd_info = cwd_info;
     dir_entry cur_cwd[BLOCK_SIZE/sizeof(dir_entry)];
     memcpy(cur_cwd, cwd, sizeof(cwd));
 
@@ -162,11 +219,25 @@ FS::create(std::string filepath)
     std::string filename;
     std::string dirpath;
     get_filename_parts(filepath, &filename, &dirpath);
-    uint8_t access_rights;
-    change_cwd(dirpath, &access_rights);
-    if ((access_rights & WRITE) == 0) {
-        std::cout << "You do not have permission to create files in this directory." << std::endl;
+    if (filename.empty()) {
+        std::cout << "Cannot create file with same name as a directory." << std::endl;
         return -1;
+    }
+    if (change_cwd(dirpath) == -1) {
+        return -1;
+    }
+    if ((cwd_info.access_rights & WRITE) == 0  || (cwd_info.access_rights & EXECUTE) == 0) {
+        std::cout << "You do not have permission to create files in this directory." << std::endl;
+        restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
+        return -1;
+    }
+
+    for (int i = 0; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
+        if (strncmp(cwd[i].file_name, filename.c_str(), 56) == 0) {
+            std::cout << "A file or directory named " << filename << " already exists in this directory." << std::endl;
+            restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
+            return -1;
+        }
     }
 
     std::string data;
@@ -185,7 +256,7 @@ FS::create(std::string filepath)
 
     int blk_no = find_empty_block();
     if (blk_no == -1) {
-        std::cout << "No free blocks\n";
+        restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
         return -1;
     }
     file.first_blk = blk_no;
@@ -193,28 +264,23 @@ FS::create(std::string filepath)
     int dir_index = -1;
     for (int i = 1; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
         if (cwd[i].first_blk == 0) {
-            cwd[i] = file;
             dir_index = i;
             break;
         }
     }
     if (dir_index == -1) {
         std::cout << "No free space in directory\n";
+        restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
         return -1;
     }
 
-    int success = write_data(file.first_blk, data);
-    if (success == -1) {
-        std::cout << "No free blocks\n";
+    if (write_data(file.first_blk, data) == -1) {
+        restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
         return -1;
     }
+    cwd[dir_index] = file;
 
-    // Restore cwd
-    if (working_dir_blk != cwd_blk) {
-        disk.write(working_dir_blk, (uint8_t*) cwd);
-        working_dir_blk = cwd_blk;
-        disk.read(cwd_blk, (uint8_t*)cwd);
-    }
+    restore_cwd(cur_cwd, cwd_blk, cur_cwd_info);
     return 0;
 }
 
@@ -222,22 +288,42 @@ FS::create(std::string filepath)
 int
 FS::cat(std::string filepath)
 {
-    int cwd_blk = working_dir_blk;
+    int cur_cwd_blk = cwd_blk;
+    dir_entry cur_cwd_info = cwd_info;
     dir_entry cur_cwd[BLOCK_SIZE/sizeof(dir_entry)];
     memcpy(cur_cwd, cwd, sizeof(cwd));
     
     std::string filename;
     std::string dirpath;
     get_filename_parts(filepath, &filename, &dirpath);
-    uint8_t access_rights;
-    change_cwd(dirpath, &access_rights);
+    if (filename.empty()) {
+        std::cout << "Filename is empty" << std::endl;
+        return -1;
+    }
+    if (change_cwd(dirpath) == -1) {
+        return -1;
+    }
     
     int found = 0;
     for (int i = 0; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
         if (strncmp(cwd[i].file_name, filename.c_str(), 56) == 0) {
+            if (cwd[i].type == TYPE_DIR) {
+                std::cout << filename << " is not a file" << std::endl;
+                restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
+                return -1;
+            }
+            if ((cwd[i].access_rights & READ) == 0) {
+                std::cout << "You do not have permission to read " << filename << std::endl;
+                restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
+                return -1;
+            }
             int blk_no = cwd[i].first_blk;
             uint8_t buf[cwd[i].size];
-            read_data(blk_no, buf, cwd[i].size);
+
+            if (read_data(blk_no, buf, cwd[i].size) == -1) {
+                restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
+                return -1;
+            }
             std::cout << buf << std::endl;
             found = 1;
             break;
@@ -247,9 +333,7 @@ FS::cat(std::string filepath)
         std::cout << "File \"" << filename << "\" not found" << std::endl;
     }
 
-    // Restore cwd
-    working_dir_blk = cwd_blk;
-    memcpy(cwd, cur_cwd, sizeof(cwd));
+    restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
     return 0;
 }
 
@@ -279,7 +363,8 @@ FS::ls()
 int
 FS::cp(std::string sourcepath, std::string destpath)
 {
-    int cwd_blk = working_dir_blk;
+    int cur_cwd_blk = cwd_blk;
+    dir_entry cur_cwd_info = cwd_info;
     dir_entry cur_cwd[BLOCK_SIZE/sizeof(dir_entry)];
     memcpy(cur_cwd, cwd, sizeof(cwd));
 
@@ -289,17 +374,29 @@ FS::cp(std::string sourcepath, std::string destpath)
     std::string dest_dir;
     get_filename_parts(sourcepath, &source_filename, &source_dir);
     get_filename_parts(destpath, &dest_filename, &dest_dir);
+    if (source_filename.empty()) {
+        std::cout << "Source file not found" << std::endl;
+        return -1;
+    }
+    if (dest_filename.empty()) {
+        dest_filename = source_filename;
+    }
 
     dir_entry new_file;
     strncpy(new_file.file_name, dest_filename.c_str(), 56);
     new_file.first_blk = 0;
 
-    uint8_t access_rights;
-    change_cwd(source_dir, &access_rights);
-
+    if (change_cwd(source_dir) == -1) {
+        return -1;
+    }
     int current_blk = -1;
     for (int i = 0; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
         if (strncmp(cwd[i].file_name, source_filename.c_str(), 56) == 0) {
+            if ((cwd[i].access_rights & READ) == 0) {
+                std::cout << "You do not have permission to read " << source_filename << std::endl;
+                restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
+                return -1;
+            }
             new_file.size = cwd[i].size;
             new_file.type = cwd[i].type;
             new_file.access_rights = cwd[i].access_rights;
@@ -308,39 +405,57 @@ FS::cp(std::string sourcepath, std::string destpath)
         }
     }
     if (current_blk == -1) {
-        std::cout << "File not found\n";
+        std::cout << "File not found" << std::endl;
+        restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
         return -1;
     }
 
     uint8_t buf[new_file.size];
-    read_data(current_blk, buf, new_file.size);
+    if (read_data(current_blk, buf, new_file.size) == -1) {
+        return -1;
+    }
     
     int new_blk_no = find_empty_block();
     if (new_blk_no == -1) {
-        std::cout << "No free blocks\n";
+        restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
         return -1;
     }
     new_file.first_blk = new_blk_no;
-    write_data(new_file.first_blk, std::string((char*)buf));
-
-    change_cwd(dest_dir, &access_rights);
-    if (access_rights & WRITE == 0) {
-        std::cout << "You do not have permission to create files in this directory." << std::endl;
+    
+    if (change_cwd(dest_dir) == -1) {
+        restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
         return -1;
     }
+
+    if (cwd_info.access_rights & WRITE == 0) {
+        std::cout << "You do not have permission to create files in this directory." << std::endl;
+        restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
+        return -1;
+    }
+    for (int i = 0; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
+        if (strncmp(cwd[i].file_name, new_file.file_name, 56) == 0) {
+            std::cout << "File with name " << new_file.file_name << " already exists" << std::endl;
+            restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
+            return -1;
+        }
+    }
+    int cwd_index = -1;
     for (int i = 1; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
         if (cwd[i].first_blk == 0) {
-            cwd[i] = new_file;
+            cwd_index = i;
             break;
         }
     }
-
-    // Restore cwd
-    if (working_dir_blk != cwd_blk) {
-        disk.write(working_dir_blk, (uint8_t*) cwd);
-        working_dir_blk = cwd_blk;
-        memcpy(cwd, cur_cwd, sizeof(cwd));
+    if (cwd_index == -1) {
+        std::cout << "No space in directory" << std::endl;
+        return -1;
     }
+    if (write_data(new_file.first_blk, std::string((char*)buf)) == -1) {
+        return -1;     
+    };
+    cwd[cwd_index] = new_file;
+
+    restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info);
     return 0;
 }
 
@@ -349,17 +464,52 @@ FS::cp(std::string sourcepath, std::string destpath)
 int
 FS::mv(std::string sourcepath, std::string destpath)
 {
-    int cwd_blk = working_dir_blk;
+    int cur_cwd_blk = cwd_blk;
+    dir_entry cur_cwd_info = cwd_info;
     dir_entry cur_cwd[BLOCK_SIZE/sizeof(dir_entry)];
     memcpy(cur_cwd, cwd, sizeof(cwd));
 
     std::string source_filename, source_dir, dest_filename, dest_dir;
     get_filename_parts(sourcepath, &source_filename, &source_dir);
     get_filename_parts(destpath, &dest_filename, &dest_dir);
-
-    uint8_t access_rights;
-    change_cwd(source_dir, &access_rights);
+    if (source_filename.empty()) {
+        std::cout << "Source file not found" << std::endl;
+        return -1;
+    }
+    if (dest_filename.empty()) {
+        dest_filename = source_filename;
+    }
+    
+    if (change_cwd(source_dir) == -1) {
+        return -1;
+    }
+    if ((cwd_info.access_rights & WRITE) == 0 || (cwd_info.access_rights & EXECUTE) == 0) {
+        std::cout << "You do not have permission to move files from this directory." << std::endl;
+        restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
+        return -1;
+    }
+    if (change_cwd(dest_dir) == -1) {
+        restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
+        return -1;
+    };
+    if ((cwd_info.access_rights & WRITE) == 0 || (cwd_info.access_rights & EXECUTE) == 0) {
+        std::cout << "You do not have permission to move files to this directory." << std::endl;
+        restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
+        return -1;
+    }
+    for(int i = 0; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
+        if (strncmp(cwd[i].file_name, dest_filename.c_str(), 56) == 0) {
+            std::cout << "File with name " << dest_filename << " already exists" << std::endl;
+            restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
+            return -1;
+        }
+    }
+    if (change_cwd(source_dir) == -1) {
+        restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
+        return -1;
+    }
     dir_entry file;
+    int found = 0;
     for (int i = 0; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
         if (strncmp(cwd[i].file_name, source_filename.c_str(), 56) == 0) {
             file = cwd[i];
@@ -367,30 +517,36 @@ FS::mv(std::string sourcepath, std::string destpath)
             cwd[i].size = 0;
             cwd[i].type = 0;
             strncpy(cwd[i].file_name, "", 56);
+            found = 1;
+            break;
         }
     }
-    disk.write(working_dir_blk, (uint8_t*) cwd);
+    if (found == 0) {
+        std::cout << "File not found" << std::endl;
+        restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
+        return -1;
+    }
+    if(disk.write(cwd_blk, (uint8_t*) cwd) == -1) {
+        restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
+        return -1;
+    }
     // Update saved cwd
-    if (working_dir_blk == cwd_blk) {
+    if (cur_cwd_blk == cwd_blk) {
         memcpy(cur_cwd, cwd, sizeof(cwd));
     }
-    change_cwd(dest_dir, &access_rights);
-    if (access_rights & WRITE == 0) {
-        std::cout << "You do not have permission to create files in this directory." << std::endl;
+    if(change_cwd(dest_dir) == -1) {
+        restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
         return -1;
     }
     for (int i = 1; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
         if (cwd[i].first_blk == 0) {
             cwd[i] = file;
+            strncpy(cwd[i].file_name, dest_filename.c_str(), 56);
+            break;
         }
     }
 
-    // Restore cwd
-    if (working_dir_blk != cwd_blk) {
-        disk.write(working_dir_blk, (uint8_t*) cwd);
-        working_dir_blk = cwd_blk;
-        memcpy(cwd, cur_cwd, sizeof(cwd));
-    }
+    restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info);
     return 0;
 }
 
@@ -398,22 +554,35 @@ FS::mv(std::string sourcepath, std::string destpath)
 int
 FS::rm(std::string filepath)
 {
-    int cwd_blk = working_dir_blk;
+    int cur_cwd_blk = cwd_blk;
+    dir_entry cur_cwd_info = cwd_info;
     dir_entry cur_cwd[BLOCK_SIZE/sizeof(dir_entry)];
     memcpy(cur_cwd, cwd, sizeof(cwd));
 
     std::string filename = filepath.substr(filepath.find_last_of("/") + 1);
     std::string dirpath = filepath.substr(0, filepath.find_last_of("/"));
     get_filename_parts(filepath, &filename, &dirpath);
-    uint8_t access_rights;
-    change_cwd(dirpath, &access_rights);
-    if (access_rights & WRITE & EXECUTE == 0) {
-        std::cout << "You do not have permission to remove files in this directory." << std::endl;
+    if (filename.empty()) {
+        std::cout << "File not found" << std::endl;
         return -1;
     }
-    int block_no = 0;
+
+    if (change_cwd(dirpath) == -1) {
+        return -1;
+    }
+    if ((cwd_info.access_rights & WRITE) == 0 || (cwd_info.access_rights & EXECUTE) == 0) {
+        std::cout << "You do not have permission to remove files in this directory." << std::endl;
+        restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
+        return -1;
+    }
+    int block_no = -1;
     for (int i = 1; i < BLOCK_SIZE/sizeof(dir_entry); i++) { // Can't remove ..;
         if (strncmp(cwd[i].file_name, filename.c_str(), 56) == 0) {
+            if (cwd[i].type == TYPE_DIR) {
+                std::cout << "Can't remove directories" << std::endl;
+                restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
+                return -1;
+            }
             block_no = cwd[i].first_blk;
             cwd[i].first_blk = 0;
             cwd[i].size = 0;
@@ -421,17 +590,18 @@ FS::rm(std::string filepath)
             break;
         }
     }
+    if (block_no == -1) {
+        std::cout << "File not found" << std::endl;
+        restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
+        return -1;
+    }
+
     while (block_no != FAT_EOF) {
         int next_blk = fat[block_no];
         fat[block_no] = FAT_FREE;
         block_no = next_blk;
     }
-    // Restore cwd
-    if (working_dir_blk != cwd_blk) {
-        disk.write(working_dir_blk, (uint8_t*) cwd);
-        working_dir_blk = cwd_blk;
-        memcpy(cwd, cur_cwd, sizeof(cwd));
-    }
+    restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info);
     return 0;
 }
 
@@ -440,61 +610,87 @@ FS::rm(std::string filepath)
 int
 FS::append(std::string filepath1, std::string filepath2)
 {
-    int cwd_blk = working_dir_blk;
+    int cur_cwd_blk = cwd_blk;
+    dir_entry cur_cwd_info = cwd_info;
     dir_entry cur_cwd[BLOCK_SIZE/sizeof(dir_entry)];
     memcpy(cur_cwd, cwd, sizeof(cwd));
 
     std::string source_filename, source_dir, dest_filename, dest_dir;
     get_filename_parts(filepath1, &source_filename, &source_dir);
     get_filename_parts(filepath2, &dest_filename, &dest_dir);
+    if (source_filename.empty() || dest_filename.empty()) {
+        std::cout << "File not found" << std::endl;
+        return -1;
+    }
 
     dir_entry file1;
     dir_entry *file2;
-    uint8_t access_rights;
-    change_cwd(source_dir, &access_rights);
+    if(change_cwd(source_dir) == -1) {
+        return -1;
+    }
     for (int i = 1; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
         if (strncmp(cwd[i].file_name, source_filename.c_str(), 56) == 0) {
             file1 = cwd[i];
         }
     }
-    change_cwd(dest_dir, &access_rights);
+
+    if (change_cwd(dest_dir) == -1) {
+        restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
+        return -1;
+    }
     for (int i = 1; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
         if (strncmp(cwd[i].file_name, dest_filename.c_str(), 56) == 0) {
             file2 = &cwd[i];
         }
     }
+
     if (file1.first_blk == 0 || file2->first_blk == 0) {
         std::cout << "File not found\n";
+        restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
         return -1;
     }
-
+    if ((file1.access_rights & READ) == 0) {
+        std::cout << "You do not have permission to read " << source_filename << std::endl;
+        restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
+        return -1;
+    }
+    if ((file2->access_rights & READ) == 0 || (file2->access_rights & WRITE) == 0) {
+        std::cout << "You do not have permission to read or write " << dest_filename << std::endl;
+        restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
+        return -1;
+    }
+    
     int last_blk = file2->first_blk;
     while (fat[last_blk] != FAT_EOF) {
         last_blk = fat[last_blk];
     }
 
-
     int file2_last_blk_size = file2->size % BLOCK_SIZE;
     int new_size = file1.size + file2->size;
-    file2->size = new_size - 1;
+    file2->size = new_size;
     
     int file2_last_blk = file2->first_blk;
     while (fat[file2_last_blk] != FAT_EOF) {
         file2_last_blk = fat[file2_last_blk];
     }
 
-    uint8_t buf[file1.size + file2_last_blk_size - 1]; // File one + last block of file two without null terminator
-    read_data(file2_last_blk, buf, file2_last_blk_size - 1);
-    read_data(file1.first_blk, &buf[file2_last_blk_size - 1], file1.size);
-
-    write_data(file2_last_blk, std::string((char*)buf));
-
-    // Restore cwd
-    if (working_dir_blk != cwd_blk) {
-        disk.write(working_dir_blk, (uint8_t*) cwd);
-        working_dir_blk = cwd_blk;
-        memcpy(cwd, cur_cwd, sizeof(cwd));
+    uint8_t buf[file1.size + file2_last_blk_size]; // File one
+    if (read_data(file2_last_blk, buf, file2_last_blk_size - 1) == -1) {
+        restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
+        return -1;
     }
+    buf[file2_last_blk_size - 1] = '\n';
+    if (read_data(file1.first_blk, &buf[file2_last_blk_size], file1.size) == -1) {
+        restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
+        return -1;
+    };
+
+    if (write_data(file2_last_blk, std::string((char*)buf)) == -1) {
+        restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
+        return -1;
+    };
+
+    restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info);
     return 0;
 }
 
@@ -503,29 +699,43 @@ FS::append(std::string filepath1, std::string filepath2)
 int
 FS::mkdir(std::string dirpath)
 {
-    int cwd_blk = working_dir_blk;
+    int cur_cwd_blk = cwd_blk;
+    dir_entry cur_cwd_info = cwd_info;
     dir_entry cur_cwd[BLOCK_SIZE/sizeof(dir_entry)];
     memcpy(cur_cwd, cwd, sizeof(cwd));
     
     std::string dirname;
     std::string path;
     get_filename_parts(dirpath, &dirname, &path);
-    uint8_t access_rights;
-    change_cwd(path, &access_rights);
-    if (access_rights & WRITE == 0) {
-        std::cout << "You do not have permission to create directories in this directory." << std::endl;
+    if (dirname.empty()) {
+        std::cout << "Directory already exists" << std::endl;
         return -1;
+    }
+    if (change_cwd(path) == -1) {
+        return -1;
+    }
+    if ((cwd_info.access_rights & WRITE) == 0 || (cwd_info.access_rights & EXECUTE) == 0) {
+        std::cout << "You do not have permission to create directories in this directory." << std::endl;
+        restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
+        return -1;
+    }
+    for (int i = 0; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
+        if (strncmp(cwd[i].file_name, dirname.c_str(), 56) == 0) {
+            std::cout << "A file or directory named " << dirname << " already exists in this directory." << std::endl;
+            restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
+            return -1;
+        }
     }
     dir_entry new_entry;
     strncpy(new_entry.file_name, dirname.c_str(), 56);
     new_entry.size = 0;
     new_entry.first_blk = find_empty_block();
     if (new_entry.first_blk == -1) {
-        std::cout << "No free blocksn\n" <<std::endl;
+        restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
         return -1;
     }
     new_entry.type = TYPE_DIR;
-    new_entry.access_rights = READ | WRITE;
+    new_entry.access_rights = READ | WRITE | EXECUTE;
     int dir_index = -1;
     for (int i = 1; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
         if (cwd[i].first_blk == 0) {
@@ -535,23 +745,21 @@ FS::mkdir(std::string dirpath)
     }
     if (dir_index == -1) {
         std::cout << "No free space in directory\n";
+        restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
         return -1;
     }
-    cwd[dir_index] = new_entry;
-    fat[new_entry.first_blk] = FAT_EOF;
     
     dir_entry new_dir[BLOCK_SIZE/sizeof(dir_entry)];
-    std::cout << new_entry.first_blk << std::endl;
-    init_dir(new_dir, working_dir_blk);
-    std::cout << sizeof(new_dir) << std::endl;
-    disk.write(new_entry.first_blk, (uint8_t*) new_dir);
+    init_dir(new_dir, cwd_blk);
+    if (disk.write(new_entry.first_blk, (uint8_t*) new_dir) == -1) {
+        restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
+        return -1;
+    };
 
-    // Restore cwd
-    if (working_dir_blk != cwd_blk) {
-        disk.write(working_dir_blk, (uint8_t*) cwd);
-        working_dir_blk = cwd_blk;
-        memcpy(cwd, cur_cwd, sizeof(cwd));
-    }
+    cwd[dir_index] = new_entry;
+    fat[new_entry.first_blk] = FAT_EOF;
+
+    restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info);
     return 0;   
 }
 
@@ -559,8 +767,19 @@ FS::mkdir(std::string dirpath)
 int
 FS::cd(std::string dirpath)
 {
-    uint8_t access_rights;
-    change_cwd(dirpath, &access_rights);
+    int cur_cwd_blk = cwd_blk;
+    dir_entry cur_cwd_info = cwd_info;
+    dir_entry cur_cwd[BLOCK_SIZE/sizeof(dir_entry)];
+    memcpy(cur_cwd, cwd, sizeof(cwd));
+
+    if (change_cwd(dirpath) == -1) {
+        return -1;
+    }
+    if ((cwd_info.access_rights & READ) == 0) {
+        std::cout << "Permisssion denied" << std::endl;
+        restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
+        return -1;
+    }
     return 0;
 }
 
@@ -569,10 +788,9 @@ FS::cd(std::string dirpath)
 int
 FS::pwd()
 {
-    std::cout << "FS::pwd()\n";
     std::vector<std::string> dirs;
     struct dir_entry current_dir;
-    int current_blk = working_dir_blk;
+    int current_blk = cwd_blk;
     if (current_blk == ROOT_BLOCK) {
         std::cout << "/" << std::endl;
         return 0;
@@ -603,8 +821,8 @@ FS::pwd()
 int
 FS::chmod(std::string accessrights, std::string filepath)
 {
-    std::cout << "chmod " << accessrights << std::endl;
-    int cwd_blk = working_dir_blk;
+    int cur_cwd_blk = cwd_blk;
+    dir_entry cur_cwd_info = cwd_info;
     dir_entry cur_cwd[BLOCK_SIZE/sizeof(dir_entry)];
     memcpy(cur_cwd, cwd, sizeof(cwd));
     
@@ -613,20 +831,28 @@ FS::chmod(std::string accessrights, std::string filepath)
 
     int access_level = atoi(accessrights.c_str());
     get_filename_parts(filepath, &filename, &dirname);
-    std::cout << filename << std::endl;
-    uint8_t access_rights;
-    change_cwd(dirname, &access_rights);
-    for (int i = 1; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
+    if (filename.empty()) {
+        filename = dirname.substr(dirname.find_last_of("/") + 1);
+        dirname = dirname.substr(0, dirname.find_last_of("/") + 1);
+    }
+
+    change_cwd(dirname);
+    int found = 0;
+    for (int i = 0; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
         if (strncmp(cwd[i].file_name, filename.c_str(), 56) == 0) {
             cwd[i].access_rights = access_level;
+            if (cwd_blk == cwd[i].first_blk) {
+                cwd_info.access_rights = access_level;
+            }
+            found = 1;
         }
     }
-    disk.write(working_dir_blk, (uint8_t*) cwd);
-    // Restore cwd
-    if (working_dir_blk != cwd_blk) {
-        disk.write(working_dir_blk, (uint8_t*) cwd);
-        working_dir_blk = cwd_blk;
-        memcpy(cwd, cur_cwd, sizeof(cwd));
+    if (found == 0) {
+        std::cout << "File or directory " << filename << " not found" << std::endl;
+        restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
+        return -1;
     }
+    // disk.write(cwd_blk, (uint8_t*) cwd);
+    restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info);
     return 0;
 }

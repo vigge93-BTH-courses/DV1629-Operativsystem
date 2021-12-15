@@ -31,7 +31,8 @@ private:
     int16_t fat[BLOCK_SIZE/2];
     struct dir_entry root_dir[BLOCK_SIZE/64];
     struct dir_entry cwd[BLOCK_SIZE/64];
-    int working_dir_blk;
+    struct dir_entry cwd_info;
+    int cwd_blk;
 
 public:
     FS();
@@ -42,7 +43,8 @@ public:
     int write_data(int starting_block, std::string data);
     int read_data(int start_blk, uint8_t* out_buf, int size);
     int init_dir(struct dir_entry *dir, int parent_blk);
-    int change_cwd(std::string dirpath, uint8_t *permissions);
+    int change_cwd(std::string dirpath);
+    int restore_cwd(dir_entry cur_cwd[BLOCK_SIZE/sizeof(dir_entry)], int cwd_blk, dir_entry cur_cwd_info, int save);
 
     // formats the disk, i.e., creates an empty file system
     int format();
