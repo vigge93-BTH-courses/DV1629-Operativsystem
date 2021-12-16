@@ -45,6 +45,7 @@ public:
     int init_dir(struct dir_entry *dir, int parent_blk);
     int change_cwd(std::string dirpath);
     int restore_cwd(dir_entry cur_cwd[BLOCK_SIZE/sizeof(dir_entry)], int cwd_blk, dir_entry cur_cwd_info, int save);
+    std::string get_pwd_string();
 
     // formats the disk, i.e., creates an empty file system
     int format();

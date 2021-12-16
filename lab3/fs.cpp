@@ -23,13 +23,22 @@ FS::~FS()
 
 void
 FS::get_filename_parts(std::string filepath, std::string *filename, std::string *dirpath) {
-    // FIXME: Base on content in directory
-    *filename = filepath.substr(filepath.find_last_of("/") + 1);
-    if (filepath.find_last_of("/") == std::string::npos) {
-        *dirpath = "";
+    int cur_cwd_blk = cwd_blk;
+    dir_entry cur_cwd_info = cwd_info;
+    dir_entry cur_cwd[BLOCK_SIZE/sizeof(dir_entry)];
+    memcpy(cur_cwd, cwd, sizeof(cwd));
+    if (change_cwd(filepath) == -1) {
+        *filename = filepath.substr(filepath.find_last_of("/") + 1);
+        if (filepath.find_last_of("/") == std::string::npos) {
+            *dirpath = get_pwd_string();
+        } else {
+            *dirpath = filepath.substr(0, filepath.find_last_of("/") + 1);
+        }
     } else {
-        *dirpath = filepath.substr(0, filepath.find_last_of("/") + 1);
+        *filename = "";
+        *dirpath = filepath;
     }
+    restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
 }
 
 int
@@ -788,12 +797,19 @@ FS::cd(std::string dirpath)
 int
 FS::pwd()
 {
+    std::cout << get_pwd_string() << std::endl;
+    return 0;
+}
+
+std::string
+FS::get_pwd_string()
+{
     std::vector<std::string> dirs;
+    std::string res = "";
     struct dir_entry current_dir;
     int current_blk = cwd_blk;
     if (current_blk == ROOT_BLOCK) {
-        std::cout << "/" << std::endl;
-        return 0;
+        return "/";
     }
     int prev_blk = cwd[0].first_blk;
     while (current_blk != ROOT_BLOCK) {
@@ -809,11 +825,10 @@ FS::pwd()
         prev_blk = prev_dir[0].first_blk;
     }
     while(dirs.size() > 0) {
-        std::cout << "/" << dirs.back();
+        res.append("/" + dirs.back());
         dirs.pop_back();
     }
-    std::cout << std::endl;
-    return 0;
+    return res;
 }
 
 // chmod <accessrights> <filepath> changes the access rights for the
@@ -852,7 +867,6 @@ FS::chmod(std::string accessrights, std::string filepath)
         restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
         return -1;
     }
-    // disk.write(cwd_blk, (uint8_t*) cwd);
     restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info);
     return 0;
 }
