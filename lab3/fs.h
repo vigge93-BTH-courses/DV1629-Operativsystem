@@ -39,6 +39,7 @@ public:
     ~FS();
 
     void get_filename_parts(std::string filepath, std::string *filename, std::string *dirpath);
+    int find_dir_from_path(std::string dirpath);
     int find_empty_block();
     int write_data(int starting_block, std::string data);
     int read_data(int start_blk, uint8_t* out_buf, int size);

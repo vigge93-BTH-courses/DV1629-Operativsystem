@@ -27,7 +27,7 @@ FS::get_filename_parts(std::string filepath, std::string *filename, std::string 
     dir_entry cur_cwd_info = cwd_info;
     dir_entry cur_cwd[BLOCK_SIZE/sizeof(dir_entry)];
     memcpy(cur_cwd, cwd, sizeof(cwd));
-    if (change_cwd(filepath) == -1) {
+    if (find_dir_from_path(filepath) == -1) {
         *filename = filepath.substr(filepath.find_last_of("/") + 1);
         if (filepath.find_last_of("/") == std::string::npos) {
             *dirpath = get_pwd_string();
@@ -38,7 +38,6 @@ FS::get_filename_parts(std::string filepath, std::string *filename, std::string 
         *filename = "";
         *dirpath = filepath;
     }
-    restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
 }
 
 int
@@ -114,6 +113,55 @@ FS::init_dir(struct dir_entry *dir, int parent_blk) {
     dir[0].first_blk = parent_blk;
     dir[0].type = TYPE_DIR;
     dir[0].access_rights = READ | WRITE | EXECUTE;
+    return 0;
+}
+
+int
+FS::find_dir_from_path(std::string dirpath) {
+    if (dirpath.empty()) {
+        return 0;
+    }
+    if (cwd_blk == ROOT_BLOCK) {
+        memcpy(root_dir, cwd, sizeof(cwd));
+    }
+
+    std::string current_dir_name;
+    int current_blk = -1;
+    struct dir_entry current_dir[BLOCK_SIZE/sizeof(dir_entry)];
+    struct dir_entry new_cwd_info;
+    if (dirpath.rfind('/', 0) == 0) { // Absolute path
+        dirpath.erase(0, 1);
+        current_blk = ROOT_BLOCK;
+        memcpy(current_dir, root_dir, sizeof(root_dir));
+        new_cwd_info = root_dir[0]; // root dir info is ..
+    } else { // Relative path
+        current_blk = cwd_blk;
+        memcpy(current_dir, cwd, sizeof(cwd));
+    }
+
+    int str_pos = 0;
+    while (str_pos != std::string::npos) {
+        str_pos = dirpath.find("/", str_pos);
+        current_dir_name = dirpath.substr(0, str_pos);
+        int found = 0;
+        for (int i = 0; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
+            if (current_dir_name.empty() || strncmp(current_dir_name.c_str(), current_dir[i].file_name, 56) == 0 && current_dir[i].type == TYPE_DIR) {
+                current_blk = current_dir[i].first_blk;
+                new_cwd_info = current_dir[i];
+                int read = disk.read(current_blk, (uint8_t*)current_dir);
+                if (read == -1) {
+                    std::cout << "Error reading from disk" << std::endl;
+                    return -1;
+                }
+                found = 1;
+                break;
+            }
+        }
+        if (found == 0) {
+            return -1;
+        }
+        dirpath.erase(0, str_pos + 1);
+    }
     return 0;
 }
 
@@ -254,7 +302,7 @@ FS::create(std::string filepath)
     while (std::getline(std::cin, in)) {
         if (in.empty())
             break;
-        data.append(in);
+        data.append(in + '\n');
     }
 
     int size = data.length() + 1; // Include null terminator.
@@ -488,7 +536,7 @@ FS::mv(std::string sourcepath, std::string destpath)
     if (dest_filename.empty()) {
         dest_filename = source_filename;
     }
-    
+
     if (change_cwd(source_dir) == -1) {
         return -1;
     }
@@ -676,20 +724,19 @@ FS::append(std::string filepath1, std::string filepath2)
 
     int file2_last_blk_size = file2->size % BLOCK_SIZE;
     int new_size = file1.size + file2->size;
-    file2->size = new_size;
+    file2->size = new_size - 1;
     
     int file2_last_blk = file2->first_blk;
     while (fat[file2_last_blk] != FAT_EOF) {
         file2_last_blk = fat[file2_last_blk];
     }
 
-    uint8_t buf[file1.size + file2_last_blk_size]; // File one
+    uint8_t buf[file1.size + file2_last_blk_size - 1]; // File one + last block of file two without null terminator
     if (read_data(file2_last_blk, buf, file2_last_blk_size - 1) == -1) {
         restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
         return -1;
     }
-    buf[file2_last_blk_size - 1] = '\n';
-    if (read_data(file1.first_blk, &buf[file2_last_blk_size], file1.size) == -1) {
+    if (read_data(file1.first_blk, &buf[file2_last_blk_size - 1], file1.size) == -1) {
         restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
         return -1;
     };
