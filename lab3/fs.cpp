@@ -191,6 +191,7 @@ FS::change_cwd(std::string dirpath) {
     } else { // Relative path
         current_blk = cwd_blk;
         memcpy(current_dir, cwd, sizeof(cwd));
+        new_cwd_info = cwd_info;
     }
 
     int str_pos = 0;
@@ -199,7 +200,11 @@ FS::change_cwd(std::string dirpath) {
         current_dir_name = dirpath.substr(0, str_pos);
         int found = 0;
         for (int i = 0; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
-            if (current_dir_name.empty() || strncmp(current_dir_name.c_str(), current_dir[i].file_name, 56) == 0 && current_dir[i].type == TYPE_DIR) {
+            if (current_dir_name.empty()) {
+                found = 1;
+                break;
+            }
+            if (strncmp(current_dir_name.c_str(), current_dir[i].file_name, 56) == 0 && current_dir[i].type == TYPE_DIR) {
                 current_blk = current_dir[i].first_blk;
                 new_cwd_info = current_dir[i];
                 int read = disk.read(current_blk, (uint8_t*)current_dir);
