@@ -43,7 +43,7 @@ public:
     int find_empty_block();
     int write_data(int starting_block, std::string data);
     int read_data(int start_blk, uint8_t* out_buf, int size);
-    int init_dir(struct dir_entry *dir, int parent_blk);
+    int init_dir(struct dir_entry *dir, int parent_blk, uint8_t access_rights);
     int change_cwd(std::string dirpath);
     int restore_cwd(dir_entry cur_cwd[BLOCK_SIZE/sizeof(dir_entry)], int cwd_blk, dir_entry cur_cwd_info, int save);
     std::string get_pwd_string();

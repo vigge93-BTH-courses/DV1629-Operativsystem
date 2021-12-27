@@ -101,7 +101,7 @@ FS::read_data(int start_blk, uint8_t* out_buf, int size) {
 }
 
 int
-FS::init_dir(struct dir_entry *dir, int parent_blk) {
+FS::init_dir(struct dir_entry *dir, int parent_blk, uint8_t access_rights) {
     for (int i = 0; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
         memset(dir[i].file_name, 0, 56);
         dir[i].size = 0;
@@ -112,7 +112,7 @@ FS::init_dir(struct dir_entry *dir, int parent_blk) {
     strncpy(dir[0].file_name, "..", 2);
     dir[0].first_blk = parent_blk;
     dir[0].type = TYPE_DIR;
-    dir[0].access_rights = READ | WRITE | EXECUTE;
+    dir[0].access_rights = access_rights;
     return 0;
 }
 
@@ -260,7 +260,7 @@ FS::format()
     fat[ROOT_BLOCK] = FAT_EOF;
     fat[FAT_BLOCK] = FAT_EOF;
 
-    init_dir(root_dir, ROOT_BLOCK);
+    init_dir(root_dir, ROOT_BLOCK, READ | WRITE | EXECUTE);
     memcpy(cwd, root_dir, sizeof(root_dir));
     cwd_blk = 0;
     cwd_info = root_dir[0];
@@ -811,7 +811,7 @@ FS::mkdir(std::string dirpath)
     }
     
     dir_entry new_dir[BLOCK_SIZE/sizeof(dir_entry)];
-    init_dir(new_dir, cwd_blk);
+    init_dir(new_dir, cwd_blk, cwd_info.access_rights);
     if (disk.write(new_entry.first_blk, (uint8_t*) new_dir) == -1) {
         restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
         return -1;
