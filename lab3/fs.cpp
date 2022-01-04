@@ -342,7 +342,7 @@ FS::create(std::string filepath)
     }
     cwd[dir_index] = file;
 
-    restore_cwd(cur_cwd, cwd_blk, cur_cwd_info);
+    restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info);
     return 0;
 }
 
