@@ -29,8 +29,8 @@ FS::get_filename_parts(std::string filepath, std::string *filename, std::string 
     memcpy(cur_cwd, cwd, sizeof(cwd));
     if (find_dir_from_path(filepath) == -1) {
         *filename = filepath.substr(filepath.find_last_of("/") + 1);
-        if (filepath.find_last_of("/") == std::string::npos) {
-            *dirpath = get_pwd_string();
+        if (filepath.rfind("/", 0) == std::string::npos) { // Convert relative path to absolute path
+            *dirpath = get_pwd_string() + "/" + filepath.substr(0, filepath.find_last_of("/") + 1);
         } else {
             *dirpath = filepath.substr(0, filepath.find_last_of("/") + 1);
         }
@@ -588,10 +588,13 @@ FS::mv(std::string sourcepath, std::string destpath)
         restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
         return -1;
     }
+
+    // Maybe unnecessary, but not harmful
     if(disk.write(cwd_blk, (uint8_t*) cwd) == -1) {
         restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
         return -1;
     }
+
     // Update saved cwd
     if (cur_cwd_blk == cwd_blk) {
         memcpy(cur_cwd, cwd, sizeof(cwd));
@@ -912,6 +915,7 @@ FS::chmod(std::string accessrights, std::string filepath)
                 cwd_info.access_rights = access_level;
             }
             found = 1;
+            break;
         }
     }
     if (found == 0) {
