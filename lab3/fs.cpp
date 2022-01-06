@@ -109,7 +109,7 @@ FS::init_dir(struct dir_entry *dir, int parent_blk, uint8_t access_rights) {
         dir[i].type = TYPE_FILE;
         dir[i].access_rights = 0;
     }
-    strncpy(dir[0].file_name, "..", 2);
+    strncpy(dir[0].file_name, "..", 3);
     dir[0].first_blk = parent_blk;
     dir[0].type = TYPE_DIR;
     dir[0].access_rights = access_rights;
