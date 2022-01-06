@@ -234,18 +234,25 @@ FS::restore_cwd(dir_entry cur_cwd[BLOCK_SIZE/sizeof(dir_entry)], int cur_cwd_blk
         memcpy(cwd, cur_cwd, sizeof(cwd));
         cwd_info = cur_cwd_info;
         cwd_blk = cur_cwd_blk;
-    } else if (cwd_blk != cur_cwd_blk) {
-        if (disk.write(cwd_blk, (uint8_t*) cwd) == -1) {
-            std::cout << "Fatal error when restoring cwd. Exiting." << std::endl;
-            exit(1);
-        };
+        if (cur_cwd_blk == ROOT_BLOCK) {
+            memcpy(root_dir, cur_cwd, sizeof(root_dir));
+        }
+    } else
+    {
+        if (cwd_blk != cur_cwd_blk) {
+            if (disk.write(cwd_blk, (uint8_t*) cwd) == -1) {
+                std::cout << "Fatal error when restoring cwd. Exiting." << std::endl;
+                exit(1);
+            };
+            
 
-        cwd_blk = cur_cwd_blk;
-        cwd_info = cur_cwd_info;
-        memcpy(cwd, cur_cwd, sizeof(cwd));
-    }
-    if (cur_cwd_blk == ROOT_BLOCK) {
-        memcpy(root_dir, cur_cwd, sizeof(root_dir));
+            cwd_blk = cur_cwd_blk;
+            cwd_info = cur_cwd_info;
+            memcpy(cwd, cur_cwd, sizeof(cwd));
+        }
+        if (cwd_blk == ROOT_BLOCK) {
+            memcpy(root_dir, cwd, sizeof(root_dir));
+        }
     }
     return 0;
 }
@@ -403,6 +410,10 @@ FS::cat(std::string filepath)
 int
 FS::ls()
 {
+    if ((cwd_info.access_rights & READ) == 0) {
+        std::cout << "You do not have permissions to read the contents of this directory" << std::endl;
+        return -1;
+    }
     std::cout << std::left;
     std::cout << std::setw(56) << "name" << "\ttype\taccessrights\tsize\n";
     for (int i = 0; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
@@ -907,21 +918,44 @@ FS::chmod(std::string accessrights, std::string filepath)
     }
 
     change_cwd(dirname);
-    int found = 0;
+    if (filename.empty() && cwd_blk == ROOT_BLOCK) { // Special case "/"
+        filename = "..";
+    }
+    int found_index = -1;
     for (int i = 0; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
         if (strncmp(cwd[i].file_name, filename.c_str(), 56) == 0) {
             cwd[i].access_rights = access_level;
-            if (cwd_blk == cwd[i].first_blk) {
+            if (cwd_blk == cwd[i].first_blk) { // Changing own permission
                 cwd_info.access_rights = access_level;
             }
-            found = 1;
+            found_index = i;
             break;
         }
     }
-    if (found == 0) {
+    if (found_index == -1) {
         std::cout << "File or directory " << filename << " not found" << std::endl;
         restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info, 0);
         return -1;
+    }
+    // Change all references to changed dir
+    if (cwd[found_index].type == TYPE_DIR) {
+        struct dir_entry changed_dir[BLOCK_SIZE/sizeof(dir_entry)];
+        if (cwd[found_index].first_blk == cwd_blk) {
+            memcpy(changed_dir, cwd, sizeof(cwd));
+        } else {
+            disk.read(cwd[found_index].first_blk, (uint8_t*)changed_dir);
+        }
+        for (int i = 1; i < BLOCK_SIZE/sizeof(dir_entry); i++) {
+            if (changed_dir[i].type == TYPE_DIR) {
+                struct dir_entry child_dir[BLOCK_SIZE/sizeof(dir_entry)];
+                disk.read(changed_dir[i].first_blk, (uint8_t*)child_dir);
+                child_dir[0].access_rights = access_level;
+                disk.write(changed_dir[i].first_blk, (uint8_t*)child_dir);
+                if (changed_dir[i].first_blk = cur_cwd_blk) {
+                    cur_cwd[0].access_rights = access_level;
+                }
+            }
+        }
     }
     restore_cwd(cur_cwd, cur_cwd_blk, cur_cwd_info);
     return 0;
