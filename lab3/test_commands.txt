@@ -31,8 +31,8 @@ append a a2
 // kontrollera att "a" är oförändrad och att "a2" har följande innehåll
 cat a2
 // förväntad output
-hej heja hejare
-hej heja hejare hejast
+//      hej heja hejare
+//      hej heja hejare hejast
 // passa samtidigt på att kontrollera att när man gör append måste source
 // ha läsrättigheter och dest måste ha både läs- och skrivrättigheter
 // kontrollera att append ger felmeddelande om detta inte uppfylls
@@ -44,7 +44,7 @@ ls
 // kontrollera att a3 innehåller samma som a
 cat a3
 // förväntad output
-hej heja hejare
+//      hej heja hejare
 
 mv a2 a4
 // kontrollera att katalogen nu innehåller tre filer: a, a3 och a4
@@ -52,8 +52,8 @@ ls
 // kontrollera att a4 innehåller samma som a2 gjorde tidigare
 cat a4
 // förväntad output
-hej heja hejare
-hej heja hejare hejast
+//        hej heja hejare
+//        hej heja hejare hejast
 
 // kontrollera att mv och cp inte skriver över existerande filer
 // nedanstående ska ge felmeddelande
@@ -96,9 +96,9 @@ ls
 // kontrollera att chmod fungerar genom att omväxlande sätta och ta bort
 // läs- och skrivrättighter, samt kolla med t ex cat och append att felmeddelande
 // skrivs ut
-chmod 6 a2
+chmod 5 a4
 ls
-append a a2
+append a3 a4
 ls
 
 // kontrollera att absoluta och relativa pather fungerar
@@ -111,6 +111,8 @@ mkdir d4
 cd /d4  // kontrollera även cd med relativ path
 mkdir ../d5
 create f1
+apsoppa
+
 // du ska nu vara i katalogen "/d4" och där ska ligga en fil "f1", kolla med pwd och ls
 // skapa tre kopior av f1
 cp f1 f2

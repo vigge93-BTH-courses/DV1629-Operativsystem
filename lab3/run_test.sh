@@ -1,0 +1,1 @@
+cat test_commands.txt | sed 's:\/\/.*$::g' | ./filesystem
